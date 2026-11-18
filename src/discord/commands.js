@@ -251,7 +251,9 @@ function resolveGame(ctx, name) {
 // so hosts don't need a separate /generate step). Returns the generation
 // result when a generation ran, null when an existing one was reused.
 async function ensureGenerated(ctx, game) {
-  if ((game.status === 'generated' || game.status === 'running') && game.multidata && fs.existsSync(game.multidata)) return null;
+  // Reuse an existing multiworld (also across container restarts, where the
+  // boot step marks games 'stopped') so the seed doesn't silently change.
+  if (game.multidata && fs.existsSync(game.multidata)) return null;
   let seed = game.requestedSeed;
   if (seed !== undefined && seed !== null && String(seed).trim() !== '') {
     seed = Number(seed);

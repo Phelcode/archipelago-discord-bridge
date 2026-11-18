@@ -79,15 +79,25 @@ export function saveApworld(config, filename, buffer) {
   return safeName;
 }
 
+// AP loads custom apworlds from <apDir>/custom_worlds when the install dir is
+// writable (our container runs as root, so it always is), and from
+// $XDG_DATA_HOME/Archipelago/worlds otherwise. Install into both so the
+// apworlds are found either way.
 export function installApworlds(config, game) {
-  const worldsDir = path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds');
-  fs.rmSync(worldsDir, { recursive: true, force: true });
-  fs.mkdirSync(worldsDir, { recursive: true });
   const srcDir = apworldDir(config);
-  for (const file of listApworlds(config)) {
-    fs.copyFileSync(path.join(srcDir, file), path.join(worldsDir, file));
+  const files = listApworlds(config);
+  const targets = [
+    path.join(config.apDir, 'custom_worlds'),
+    path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds'),
+  ];
+  for (const dir of targets) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const file of files) {
+      fs.copyFileSync(path.join(srcDir, file), path.join(dir, file));
+    }
   }
-  return worldsDir;
+  return targets[0];
 }
 
 export function stagePlayers(config, db, game) {
@@ -143,8 +153,9 @@ const runningServers = new Map();
 
 export function startGame(config, db, game, port) {
   ensureDirs(gameDir(config, game));
+  installApworlds(config, game);
   if (!game.multidata || !fs.existsSync(game.multidata)) {
-    throw new Error('Game has not been generated yet. Run /generate first.');
+    throw new Error('Game has not been generated yet.');
   }
   const logFile = path.join(gameDir(config, game), 'server.log');
   const logStream = fs.openSync(logFile, 'a');
