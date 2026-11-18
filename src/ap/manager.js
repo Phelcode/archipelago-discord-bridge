@@ -57,14 +57,25 @@ function runProcess(config, args, options = {}) {
   });
 }
 
-export function saveApworld(config, game, filename, buffer) {
-  const dir = path.join(gameDir(config, game), 'apworlds');
+// .apworld files are global: uploaded once, they are installed into every
+// game's world directory at generation time.
+export function apworldDir(config) {
+  return path.join(config.dataDir, 'apworlds');
+}
+
+export function listApworlds(config) {
+  try {
+    return fs.readdirSync(apworldDir(config)).filter((f) => f.toLowerCase().endsWith('.apworld')).sort();
+  } catch {
+    return [];
+  }
+}
+
+export function saveApworld(config, filename, buffer) {
+  const dir = apworldDir(config);
   fs.mkdirSync(dir, { recursive: true });
   const safeName = path.basename(filename);
   fs.writeFileSync(path.join(dir, safeName), buffer);
-  if (!game.apworlds.includes(safeName)) {
-    game.apworlds.push(safeName);
-  }
   return safeName;
 }
 
@@ -72,8 +83,8 @@ export function installApworlds(config, game) {
   const worldsDir = path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds');
   fs.rmSync(worldsDir, { recursive: true, force: true });
   fs.mkdirSync(worldsDir, { recursive: true });
-  const srcDir = path.join(gameDir(config, game), 'apworlds');
-  for (const file of game.apworlds) {
+  const srcDir = apworldDir(config);
+  for (const file of listApworlds(config)) {
     fs.copyFileSync(path.join(srcDir, file), path.join(worldsDir, file));
   }
   return worldsDir;

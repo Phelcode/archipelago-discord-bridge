@@ -26,7 +26,8 @@ Roles are assigned by Discord ID:
   `followUp` methods; file uploads from modals are downloaded from the attachment
   URLs Discord provides.
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
-  attachments; they are validated and stored under `DATA_DIR`.
+  attachments; they are validated and stored under `DATA_DIR`. `.apworld` files are
+  **global** — uploaded once, they are installed into every game at generation time.
 - `/generate` runs Archipelago's `Generate.py` with the game's player yamls and
   custom apworlds, producing a `.archipelago` multidata archive.
 - `/start` launches `MultiServer.py` for that archive; `/stats`, `/game-stats` and
@@ -92,7 +93,7 @@ Roles are assigned by Discord ID:
 - `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
 - `/setup-game` — host: create a game session (always opens a modal: name + optional password; discards previous player registrations/yamls — everyone must `/register` again)
-- `/upload-apworld` — host: always opens a modal (game name + `.apworld` file-upload field)
+- `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any game)
 - `/generate` — host: always opens a modal (game name + optional seed, random if empty)
 - `/start game: [port:]` — host: start the Archipelago server
 - `/stop game:` — host: stop the server

@@ -180,11 +180,28 @@ test('setup-game modal submit creates the game for a host', async () => {
 
 test('host modals are denied for non-hosts', async () => {
   const { dispatch } = setup();
-  const { interaction, calls } = modal(MODAL_UPLOAD_APWORLD, { fieldTypes: { game: { type: 4 }, file: { type: 19 } } });
+  const { interaction, calls } = modal(MODAL_UPLOAD_APWORLD, { fieldTypes: { file: { type: 19 } } });
   await dispatch(interaction);
   assert.equal(calls.reply.length, 1);
   assert.match(calls.reply[0].content, /Only hosts/);
   assert.equal(calls.deferReply.length, 0);
+});
+
+test('upload-apworld modal submit stores the file globally (no game field)', async () => {
+  const zipBuf = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(100)]);
+  const { config, db, dispatch } = setup({}, async () => zipBuf);
+  db.addHost('host-1');
+  const { interaction, calls } = modal(MODAL_UPLOAD_APWORLD, {
+    userId: 'host-1',
+    fieldTypes: { file: { type: 19 } },
+    uploadedFiles: { file: new Map([['a1', { id: 'a1', name: 'cool.apworld', size: zipBuf.length, url: 'https://cdn/cool.apworld' }]]) },
+  });
+  await dispatch(interaction);
+  assert.deepEqual(calls.deferReply, [{ ephemeral: false }]);
+  assert.match(calls.editReply[0], /Uploaded \*\*cool\.apworld\*\*/);
+  assert.match(calls.editReply[0], /every game/);
+  assert.ok(fs.existsSync(path.join(config.dataDir, 'apworlds', 'cool.apworld')));
+  assert.equal(fs.existsSync(path.join(config.dataDir, 'games')), false);
 });
 
 test('unknown modal custom ids are rejected', async () => {

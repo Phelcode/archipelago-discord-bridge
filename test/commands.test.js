@@ -137,16 +137,16 @@ test('join requires registration', async () => {
   await assert.rejects(() => handleCommand('join', ctx), /register/);
 });
 
-test('upload-apworld validates zip magic and stores the file', async () => {
+test('upload-apworld validates zip magic and stores the file globally (not per game)', async () => {
   const ctx = makeCtx();
-  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], apworlds: [] });
   const zipBuf = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(100)]);
-  ctx.options = { game: 'g' };
   ctx.attachments = { file: { filename: 'cool.apworld', size: zipBuf.length, url: 'u' } };
   ctx.download = async () => zipBuf;
   const out = await handleCommand('upload-apworld', ctx);
   assert.match(out, /cool\.apworld/);
-  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'games', 'g', 'apworlds', 'cool.apworld')));
+  assert.match(out, /every game/);
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'apworlds', 'cool.apworld')));
+  assert.equal(fs.existsSync(path.join(ctx.config.dataDir, 'games')), false);
 
   ctx.attachments = { file: { filename: 'fake.apworld', size: 4, url: 'u' } };
   ctx.download = async () => Buffer.from('nope');
@@ -301,7 +301,7 @@ test('modal builders produce file-upload (type 19) and text (type 4) components 
   const up = uploadApworldModal().toJSON();
   assert.equal(up.custom_id, 'bridge_upload_apworld');
   assert.ok(up.components.some((c) => c.component.type === 19 && c.component.custom_id === 'file'));
-  assert.ok(up.components.some((c) => c.component.type === 4 && c.component.custom_id === 'game'));
+  assert.ok(up.components.every((c) => c.component.type === 19), 'apworld upload has no game field — apworlds are global');
 
   const setup = setupGameModal().toJSON();
   assert.equal(setup.custom_id, 'bridge_setup_game');
@@ -386,21 +386,26 @@ function mockClient({ failGuild = false, failAppEdit = false } = {}) {
   return { client, calls };
 }
 
-test('registerAllCommands updates the app and registers global (+guild) commands', async () => {
+test('registerAllCommands clears old commands, then re-adds global (+guild) commands', async () => {
   const { client, calls } = mockClient();
   await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
   assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  assert.equal(calls[1][0], 'global');
-  assert.equal(calls[1][1][0].integration_types[1], 1);
-  assert.deepEqual(calls[1][1][0].contexts, [0, 1, 2]);
-  assert.equal(calls[2][0], 'guild');
-  assert.equal(calls[2][1], 'g1');
-  assert.deepEqual(calls[2][2][0].integration_types, [0]);
+  // clears first so nothing stays registered twice / stale commands disappear
+  assert.deepEqual(calls[1], ['global', []]);
+  assert.deepEqual(calls[2], ['guild', 'g1', []]);
+  // then re-adds: guild commands, then global
+  assert.equal(calls[3][0], 'guild');
+  assert.equal(calls[3][1], 'g1');
+  assert.deepEqual(calls[3][2][0].integration_types, [0]);
+  assert.equal(calls[4][0], 'global');
+  assert.equal(calls[4][1][0].integration_types[1], 1);
+  assert.deepEqual(calls[4][1][0].contexts, [0, 1, 2]);
 
   const second = mockClient();
   await registerAllCommands(second.client, { guildId: null, definitions: COMMAND_DEFINITIONS });
   assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.equal(second.calls.filter((c) => c[0] === 'global').length, 1);
+  assert.deepEqual(second.calls[1], ['global', []]);
+  assert.equal(second.calls.filter((c) => c[0] === 'global' && c[1].length > 0).length, 1);
 });
 
 test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {

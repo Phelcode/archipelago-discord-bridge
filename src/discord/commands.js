@@ -39,7 +39,7 @@ export const COMMAND_DEFINITIONS = [
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
   { name: 'setup-game', description: '[host] Create a new game session (opens a form)', options: [] },
-  { name: 'upload-apworld', description: '[host] Upload a custom .apworld file to a game (opens an upload form)', options: [] },
+  { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every game; opens an upload form)', options: [] },
   { name: 'generate', description: '[host] Generate the multiworld for a game (opens a form)', options: [] },
   {
     name: 'start',
@@ -98,18 +98,23 @@ export async function registerAllCommands(client, { guildId, definitions }) {
   } catch (err) {
     console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
-  await client.application.commands.set(globalCommandPayload(definitions));
+  // Clear previously registered commands (global and guild) before re-adding
+  // the current set, so removed/renamed commands don't linger and nothing is
+  // registered twice.
+  await client.application.commands.set([]);
   if (guildId) {
     try {
       const guild = await client.guilds.fetch(guildId);
+      await guild.commands.set([]);
       await guild.commands.set(guildCommandPayload(definitions));
     } catch (err) {
       // Common when the app isn't installed in that guild with the bot scope
-      // (403 Missing Access). Global commands are already registered and
+      // (403 Missing Access). Global commands are still registered below and
       // propagate within ~1h, so this is a warning, not a failure.
       console.warn(`Guild command registration in ${guildId} failed (${err.message}). Global commands are registered; add the app to that guild with the bot scope for instant guild commands.`);
     }
   }
+  await client.application.commands.set(globalCommandPayload(definitions));
 }
 
 export const PERMISSIONS = {
@@ -171,8 +176,7 @@ export function uploadApworldModal() {
     .setCustomId(MODAL_UPLOAD_APWORLD)
     .setTitle('Upload .apworld')
     .addLabelComponents(
-      textField('game', 'Game session name'),
-      fileUploadField('file', '.apworld file'),
+      fileUploadField('file', '.apworld file (available to all games)'),
     );
 }
 
@@ -424,7 +428,6 @@ const handlers = {
       password: password || null,
       createdBy: ctx.userId,
       status: 'setup',
-      apworlds: [],
       playerIds: [],
       multidata: null,
       seed: null,
@@ -438,16 +441,15 @@ const handlers = {
   },
 
   async 'upload-apworld'(ctx) {
-    const game = resolveGame(ctx, ctx.options.game || ctx.modal?.fields?.game);
     const att = ctx.attachments.file || ctx.modal?.files?.file?.[0];
     if (!att) throw new UserError('Attach a .apworld file in the form.');
     if (att.size > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     const buffer = Buffer.from(await ctx.download(att.url));
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     validateApworld(att.filename, buffer);
-    const saved = ctx.ap.saveApworld(ctx.config, game, att.filename, buffer);
-    ctx.db.setGame(game.name, game);
-    return `Uploaded **${saved}** to game **${game.name}** (${game.apworlds.length} apworld(s) total).`;
+    const saved = ctx.ap.saveApworld(ctx.config, att.filename, buffer);
+    const all = ctx.ap.listApworlds(ctx.config);
+    return `Uploaded **${saved}** — apworlds are global and used by every game (${all.length} stored: ${all.join(', ')}).`;
   },
 
   async generate(ctx) {
@@ -517,13 +519,14 @@ const handlers = {
     const game = ctx.options.game ? resolveGame(ctx, ctx.options.game) : null;
     const games = game ? [game] : ctx.db.listGames();
     if (!games.length) return 'No games yet. A host can create one with /setup-game.';
-    const lines = [];
+    const apworlds = ctx.ap.listApworlds(ctx.config);
+    const lines = [`Available .apworld files (used by every game): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
     for (const g of games) {
       const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
       const players = (g.playerIds || []).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
       lines.push([
         `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
-        `  players: ${players} | apworlds: ${g.apworlds?.length ? g.apworlds.join(', ') : 'none'} | seed: ${g.seed ?? 'not generated'}`,
+        `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
       ].join('\n'));
     }
     return lines.join('\n');
