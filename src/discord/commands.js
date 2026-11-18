@@ -113,7 +113,14 @@ export async function registerAllCommands(api, { guildId, definitions }) {
   await api.updateApplication({ integration_types: INTEGRATION_TYPES_BOTH });
   await api.registerCommands(globalCommandPayload(definitions));
   if (guildId) {
-    await api.registerGuildCommands(guildId, guildCommandPayload(definitions));
+    try {
+      await api.registerGuildCommands(guildId, guildCommandPayload(definitions));
+    } catch (err) {
+      // Common when the app isn't installed in that guild with the bot scope
+      // (403 Missing Access). Global commands are already registered and
+      // propagate within ~1h, so this is a warning, not a failure.
+      console.warn(`Guild command registration in ${guildId} failed (${err.message}). Global commands are registered; add the app to that guild with the bot scope for instant guild commands.`);
+    }
   }
 }
 

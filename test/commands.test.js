@@ -409,6 +409,15 @@ test('registerAllCommands updates the app and registers global (+guild) commands
   assert.equal(calls.filter((c) => c[0] === 'global').length, 1);
 });
 
+test('registerAllCommands warns but succeeds when guild registration is denied (403)', async () => {
+  const api = {
+    async updateApplication() {},
+    async registerCommands() {},
+    async registerGuildCommands() { throw new Error('Discord API PUT guild commands failed: 403 Missing Access'); },
+  };
+  await registerAllCommands(api, { guildId: 'g1', definitions: COMMAND_DEFINITIONS }); // must not throw
+});
+
 test('role rejects assigning the owner', async () => {
   const ctx = makeCtx({ userId: 'owner-1' });
   ctx.subcommand = 'add';
