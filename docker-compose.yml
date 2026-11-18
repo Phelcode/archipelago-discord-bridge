@@ -1,7 +1,7 @@
 services:
   bridge:
     build: .
-    container_name: archipelago-discord-bridge
+    container_name: ap-manager
     env_file: .env
     ports:
       # Bridge HTTP port: /health only. Interactions arrive over the Discord

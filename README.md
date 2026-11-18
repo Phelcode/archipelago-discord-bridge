@@ -66,6 +66,11 @@ Roles are assigned by Discord ID:
    docker compose up -d --build
    ```
 
+   The compose service sets `container_name: ap-manager`, so refer to the
+   container by that name: `docker logs ap-manager`, `docker restart ap-manager`,
+   etc. If you build/run without compose instead: `docker build -t ap-manager .`
+   and `docker run --name ap-manager ...`.
+
    Ports: the compose file publishes `PORT` (3000, bridge `/health` only —
    interactions from Discord arrive over the gateway websocket, so this port does
    not need to be public) **and the Archipelago game port range**
