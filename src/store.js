@@ -56,6 +56,11 @@ export class Store {
     this.save();
   }
 
+  clearPlayers() {
+    this.data.players = {};
+    this.save();
+  }
+
   getGame(name) {
     return this.data.games[name] || null;
   }

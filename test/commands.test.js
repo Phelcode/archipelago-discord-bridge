@@ -130,6 +130,26 @@ test('setup-game creates a game and join adds the player', async () => {
   assert.deepEqual(ctx.db.getGame('my-game').playerIds, ['user-1']);
 });
 
+test('setup-game discards previous players and yamls', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setGame('old', { name: 'old', status: 'stopped', playerIds: ['user-1'], apworlds: [] });
+  const playersDir = path.join(ctx.config.dataDir, 'players');
+  fs.mkdirSync(playersDir, { recursive: true });
+  fs.writeFileSync(path.join(playersDir, 'user-1.yaml'), 'name: Alice\n');
+
+  ctx.options = { name: 'new-game' };
+  const out = await handleCommand('setup-game', ctx);
+  assert.match(out, /new-game/);
+  assert.match(out, /discarded/);
+  assert.equal(ctx.db.getPlayer('user-1'), null);
+  assert.deepEqual(ctx.db.data.players, {});
+  assert.deepEqual(ctx.db.getGame('old').playerIds, []);
+  assert.equal(fs.existsSync(playersDir), false);
+  assert.ok(ctx.db.getGame('new-game'));
+});
+
 test('join requires registration', async () => {
   const ctx = makeCtx();
   ctx.options = { game: 'x' };

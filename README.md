@@ -34,9 +34,14 @@ Roles are assigned by Discord ID:
    - Copy the **Application ID**, **Public Key**, and a **Bot token** (the token is
      only used for REST calls like registering commands — the app is added with the
      `applications.commands` scope only, no bot/gateway scopes).
-   - Under *General Information → Interactions Endpoint URL*, set the public HTTPS
-     URL of this service, e.g. `https://bridge.example.com/interactions` (you need a
-     tunnel such as cloudflared pointed at the container's port).
+   - Under *General Information → Interactions Endpoint URL*, set an HTTPS URL that
+     reaches this service, e.g. `https://bridge.example.com/interactions`.
+     **Note:** this is inherent to slash-command *apps* — Discord's servers push
+     interactions to your endpoint, so it must be reachable from the internet (a
+     tunnel such as cloudflared pointed at the container's port is the usual way to
+     run it locally). Discord *Activities* (embedded in-client apps) are a different
+     thing: they run inside the Discord client and need no public URL, but they are
+     iframe UIs, not slash commands served by your server. This bridge is the former.
    - Add the app to your server with `applications.commands` scope.
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
    `DISCORD_PUBLIC_KEY`, `DISCORD_OWNER_ID` (your Discord user ID) and
@@ -48,17 +53,22 @@ Roles are assigned by Discord ID:
    ```
 
    The container **updates itself to the newest version on boot**: the entrypoint
-   pulls the latest `main` of this repository (and of Archipelago) before starting.
-   Set `SELF_UPDATE=false` / `AP_UPDATE=false` to disable, or override
-   `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in `./data` (a volume), so
-   updates never wipe games, uploads or role assignments.
+   pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
+   to disable, or override `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in
+   `./data` (a volume), so updates never wipe games, uploads or role assignments.
+
+   **Archipelago itself is included**: `vendor/Archipelago/` is a vendored snapshot
+   of Archipelago (see `vendor/README.md` for the exact commit) that the Docker image
+   bakes in at `/opt/Archipelago` together with its Python venv — nothing is cloned
+   from GitHub at boot. Set `AP_UPDATE=true` only if you additionally want the
+   container to pull the latest Archipelago on boot.
 
 ## Commands
 
 - `/help` — commands available to your role
 - `/register` (attachment: your player `.yaml`) — register as a player
 - `/unregister`, `/me`, `/join game:`, `/leave game:`, `/players [game:]`
-- `/setup-game name: password:` — host: create a game session
+- `/setup-game name: password:` — host: create a game session (discards previous player registrations/yamls — everyone must `/register` again)
 - `/upload-apworld game: file:` — host: upload a `.apworld`
 - `/generate game: [seed:]` — host: generate the multiworld
 - `/start game: [port:]` — host: start the Archipelago server
@@ -69,10 +79,10 @@ Roles are assigned by Discord ID:
 - `/hints [game:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
 - `/role add|remove|list` — owner: manage host roles
 
-Typical flow: owner runs `/role add host @someone` → host runs `/setup-game` →
-players `/register` + `/join` → host `/upload-apworld` (optional) → host
-`/generate` → host `/start` → everyone watches `/stats` and `/game-stats`, players
-check `/hints`.
+Typical flow: owner runs `/role add host @someone` → host runs `/setup-game`
+(this wipes previous players/yamls) → players `/register` + `/join` → host
+`/upload-apworld` (optional) → host `/generate` → host `/start` → everyone watches
+`/stats` and `/game-stats`, players check `/hints`.
 
 ## Configuration (`.env`)
 
@@ -92,4 +102,13 @@ npm start         # requires the env vars; AP_DIR/AP_PYTHON point at an
 Layout: `src/index.js` (HTTP interactions server), `src/discord/` (signature
 verification, REST API, permissions, command handlers), `src/ap/manager.js`
 (Archipelago process management), `scripts/ap_probe.py` (spectator probe),
-`scripts/entrypoint.sh` + `Dockerfile` (self-updating container).
+`scripts/entrypoint.sh` + `Dockerfile` (self-updating container),
+`vendor/Archipelago/` (bundled Archipelago snapshot).
+
+Only two npm dependencies: `tweetnacl` (the same Ed25519 verification the
+`discord-interactions` package wraps) and `yaml` (player yaml parsing). Everything
+else — HTTP server, REST calls, interaction dispatch — is Node's standard library,
+because an interactions-only app needs very little: verify one signature, parse
+JSON, answer callbacks/followups, register commands. Full bot libraries like
+discord.js are built around a gateway bot connection, which is exactly what this
+app avoids.

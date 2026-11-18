@@ -321,6 +321,14 @@ const handlers = {
     if (!name) throw new UserError('Provide a game name.');
     const slug = ctx.ap.slugify(name);
     if (ctx.db.getGame(slug)) throw new UserError(`A game named "${name}" already exists.`);
+    // A new game discards previous player registrations and their uploaded
+    // yamls; everyone has to /register again for the new game.
+    ctx.db.clearPlayers();
+    for (const existing of ctx.db.listGames()) {
+      existing.playerIds = [];
+      ctx.db.setGame(existing.name, existing);
+    }
+    fs.rmSync(path.join(ctx.config.dataDir, 'players'), { recursive: true, force: true });
     const game = {
       name: slug,
       displayName: name,
@@ -336,7 +344,7 @@ const handlers = {
       createdAt: new Date().toISOString(),
     };
     ctx.db.setGame(slug, game);
-    return `Created game **${slug}**. Next: players /register and /join, hosts /upload-apworld, then /generate.`;
+    return `Created game **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /generate.`;
   },
 
   async 'upload-apworld'(ctx) {
