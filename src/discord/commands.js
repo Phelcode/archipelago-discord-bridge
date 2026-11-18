@@ -397,10 +397,11 @@ const handlers = {
     game.multidata = result.multidata;
     game.spoiler = result.spoiler;
     game.seed = result.seed;
+    game.seedNumber = result.seedNumber;
     game.generatedAt = new Date().toISOString();
     ctx.db.setGame(game.name, game);
     return [
-      `Generated multiworld for **${game.name}** (seed ${result.seed}).`,
+      `Generated multiworld for **${game.name}** (seed ${result.seedNumber}, id ${result.seed}).`,
       `Players (${result.players.length}): ${result.players.join(', ')}`,
       `Multidata: \`${result.multidata}\``,
       `Spoiler log: \`${result.spoiler}\``,

@@ -74,6 +74,14 @@ Roles are assigned by Discord ID:
    docker compose up -d --build
    ```
 
+   Ports: the compose file publishes `PORT` (3000, bridge `/health` — and the
+   interactions endpoint if you use `DISCORD_GATEWAY=false`) **and the
+   Archipelago game port range** `BASE_PORT`..`AP_PORT_RANGE_END`
+   (default 38281–38290), because each running game's Archipelago server listens
+   on the next free port from `BASE_PORT` and players must reach it. Adjust the
+   range in `docker-compose.yml` if you change `BASE_PORT`. In gateway mode no
+   inbound port needs to be public for Discord itself.
+
    The container **updates itself to the newest version on boot**: the entrypoint
    pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
    to disable, or override `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in

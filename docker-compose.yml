@@ -4,11 +4,15 @@ services:
     container_name: archipelago-discord-bridge
     env_file: .env
     ports:
-      # Only needed for the /health endpoint (and for HTTP interactions-endpoint
-      # mode if you use DISCORD_GATEWAY=false, in which case it must be reachable
-      # by Discord at a public HTTPS URL — see README). In gateway mode
-      # (default) no inbound port is required at all.
+      # Bridge HTTP port: /health, and the interactions endpoint in
+      # DISCORD_GATEWAY=false mode (then it must be publicly reachable via
+      # HTTPS — see README). In gateway mode (default) no public inbound port
+      # is needed for Discord.
       - "${PORT:-3000}:${PORT:-3000}"
+      # Archipelago game servers: the bridge spawns one server per running game
+      # on BASE_PORT (default 38281) and up. Players connect to these ports, so
+      # they must be published. Keep the range in sync with BASE_PORT.
+      - "${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}:${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}"
     volumes:
       - ./data:/data
     restart: unless-stopped

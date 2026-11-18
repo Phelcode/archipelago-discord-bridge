@@ -1,7 +1,15 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+
+// Archipelago accepts seeds in [0, 10^20); we stay well inside safe-integer
+// range. A random seed is always picked explicitly when none is given.
+export function resolveSeed(seed) {
+  if (seed !== undefined && seed !== null && seed !== '') return Number(seed);
+  return crypto.randomInt(1, 2 ** 48);
+}
 
 export function slugify(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -96,13 +104,14 @@ export async function generateGame(config, db, game, seed) {
     throw new Error('No players joined this game yet. Players must /register and /join first.');
   }
   const outputDir = path.join(gameDir(config, game), 'output');
+  const seedNumber = resolveSeed(seed);
   const args = [
     path.join(config.apDir, 'Generate.py'),
     '--player_files_path', path.join(gameDir(config, game), 'Players'),
     '--outputpath', outputDir,
     '--log_level', 'warning',
+    '--seed', String(seedNumber),
   ];
-  if (seed !== undefined && seed !== null && seed !== '') args.push('--seed', String(seed));
   const { stdout } = await runProcess(config, args, { env: apEnv(config, game), game });
   const files = fs.readdirSync(outputDir).filter((f) => f.endsWith('.zip'));
   if (files.length === 0) throw new Error(`Generation produced no .zip output.\n${stdout.slice(-2000)}`);
@@ -113,6 +122,7 @@ export async function generateGame(config, db, game, seed) {
     multidata: path.join(outputDir, zipFile),
     spoiler: path.join(outputDir, zipFile.replace(/\.zip$/, '_Spoiler.txt')),
     seed: match ? match[1] : zipFile,
+    seedNumber,
     players: staged,
     log: stdout,
   };
