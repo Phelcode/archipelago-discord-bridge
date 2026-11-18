@@ -14,7 +14,7 @@ Roles are assigned by Discord ID:
 | Role | Who | Can do |
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
-| **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/generate`, `/start`, `/stop`, `/delete-game` |
+| **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/start`, `/stop`, `/delete-game` |
 | **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/stats`, `/game-stats` |
 | **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/game-stats`, `/players` |
 
@@ -28,9 +28,10 @@ Roles are assigned by Discord ID:
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
   attachments; they are validated and stored under `DATA_DIR`. `.apworld` files are
   **global** — uploaded once, they are installed into every game at generation time.
-- `/generate` runs Archipelago's `Generate.py` with the game's player yamls and
-  custom apworlds, producing a `.archipelago` multidata archive.
-- `/start` launches `MultiServer.py` for that archive; `/stats`, `/game-stats` and
+- `/start` runs Archipelago's `Generate.py` first if the game hasn't been
+  generated yet (seed from the `/setup-game` form, random if empty), producing a
+  `.archipelago` multidata archive, then launches `MultiServer.py` for it;
+  `/stats`, `/game-stats` and
   `/hints` query the running server over its websocket protocol as a spectator
   (`scripts/ap_probe.py`) and report checks per player, completion status, hint
   points, gamewide totals and hints.
@@ -103,10 +104,9 @@ Roles are assigned by Discord ID:
 - `/register` — register as a player (always opens a modal with a file-upload field for your player `.yaml` + optional slot-name field)
 - `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
-- `/setup-game` — host: create a game session (always opens a modal: name + optional password; discards previous player registrations/yamls — everyone must `/register` again)
+- `/setup-game` — host: create a game session (always opens a modal: name + optional password + optional seed, random if empty; discards previous player registrations/yamls — everyone must `/register` again)
 - `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any game)
-- `/generate` — host: always opens a modal (game name + optional seed, random if empty)
-- `/start game: [port:]` — host: start the Archipelago server
+- `/start game: [port:]` — host: generate the multiworld if needed, then start the Archipelago server
 - `/stop game:` — host: stop the server
 - `/status [game:] [scope:]` — everyone: session/server status. Without `game:`, lists games — **active ones by default** (started or waiting to be started); `scope: finished` shows stopped games, `scope: all` shows everything. With `game:`, shows that one game regardless of scope
 - `/delete-game game:` — host: stop the server if running, then delete the game session and its files
@@ -117,8 +117,8 @@ Roles are assigned by Discord ID:
 
 Typical flow: owner runs `/role add host @someone` → host runs `/setup-game`
 (this wipes previous players/yamls) → players `/register` + `/join` → host
-`/upload-apworld` (optional) → host `/generate` → host `/start` → everyone watches
-`/stats` and `/game-stats`, players check `/hints`.
+`/upload-apworld` (optional) → host `/start` (generates the multiworld if needed,
+then runs the server) → everyone watches `/stats` and `/game-stats`, players check `/hints`.
 
 ## Configuration (`.env`)
 
@@ -140,7 +140,7 @@ self-update settings, and Archipelago source settings.
 npm install
 npm test          # unit + interaction dispatch tests (no Discord/AP needed)
 npm start         # requires the env vars; AP_DIR/AP_PYTHON point at an
-                  # Archipelago checkout + venv for /generate, /start, /stats
+                  # Archipelago checkout + venv for /start, /stats
 ```
 
 Layout: `src/index.js` (entrypoint: health server + discord.js client login and

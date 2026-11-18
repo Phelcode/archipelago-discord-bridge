@@ -40,10 +40,9 @@ export const COMMAND_DEFINITIONS = [
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
   { name: 'setup-game', description: '[host] Create a new game session (opens a form)', options: [] },
   { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every game; opens an upload form)', options: [] },
-  { name: 'generate', description: '[host] Generate the multiworld for a game (opens a form)', options: [] },
   {
     name: 'start',
-    description: '[host] Start the Archipelago server for a generated game',
+    description: '[host] Generate the multiworld if needed, then start the Archipelago server',
     options: [gameOption(true), { name: 'port', description: 'Port to listen on (optional)', type: INTEGER, required: false }],
   },
   { name: 'stop', description: '[host] Stop the Archipelago server for a game', options: [gameOption(true)] },
@@ -142,7 +141,6 @@ export const PERMISSIONS = {
   players: 'all',
   'setup-game': 'host',
   'upload-apworld': 'host',
-  generate: 'host',
   start: 'host',
   stop: 'host',
   'delete-game': 'host',
@@ -159,12 +157,10 @@ export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 
 export const MODAL_REGISTER = 'bridge_register';
 export const MODAL_UPLOAD_APWORLD = 'bridge_upload_apworld';
 export const MODAL_SETUP_GAME = 'bridge_setup_game';
-export const MODAL_GENERATE = 'bridge_generate';
 export const MODAL_PERMISSIONS = {
   [MODAL_REGISTER]: 'all',
   [MODAL_UPLOAD_APWORLD]: 'host',
   [MODAL_SETUP_GAME]: 'host',
-  [MODAL_GENERATE]: 'host',
 };
 
 const fileUploadField = (customId, labelText) =>
@@ -203,15 +199,6 @@ export function setupGameModal() {
     .addLabelComponents(
       textField('name', 'Game session name'),
       textField('password', 'Server password (optional)', { required: false }),
-    );
-}
-
-export function generateModal() {
-  return new ModalBuilder()
-    .setCustomId(MODAL_GENERATE)
-    .setTitle('Generate multiworld')
-    .addLabelComponents(
-      textField('game', 'Game session name'),
       textField('seed', 'Seed (optional, random if empty)', { required: false, maxLength: 20 }),
     );
 }
@@ -221,7 +208,6 @@ export const ALWAYS_MODAL = {
   register: registerModal,
   'upload-apworld': uploadApworldModal,
   'setup-game': setupGameModal,
-  generate: generateModal,
 };
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
@@ -259,6 +245,37 @@ function resolveGame(ctx, name) {
   if (games.length === 1) return games[0];
   if (games.length === 0) throw new UserError('No games have been set up yet. A host can create one with /setup-game.');
   return games[games.length - 1];
+}
+
+// Generates the multiworld if the game doesn't have one yet (used by /start,
+// so hosts don't need a separate /generate step). Returns the generation
+// result when a generation ran, null when an existing one was reused.
+async function ensureGenerated(ctx, game) {
+  if ((game.status === 'generated' || game.status === 'running') && game.multidata && fs.existsSync(game.multidata)) return null;
+  let seed = game.requestedSeed;
+  if (seed !== undefined && seed !== null && String(seed).trim() !== '') {
+    seed = Number(seed);
+    if (!Number.isInteger(seed)) throw new UserError('Seed must be an integer.');
+  }
+  const prevStatus = game.status === 'generating' ? 'setup' : game.status;
+  game.status = 'generating';
+  ctx.db.setGame(game.name, game);
+  let result;
+  try {
+    result = await ctx.ap.generateGame(ctx.config, ctx.db, game, seed);
+  } catch (err) {
+    game.status = prevStatus;
+    ctx.db.setGame(game.name, game);
+    throw err;
+  }
+  game.status = 'generated';
+  game.multidata = result.multidata;
+  game.spoiler = result.spoiler;
+  game.seed = result.seed;
+  game.seedNumber = result.seedNumber;
+  game.generatedAt = new Date().toISOString();
+  ctx.db.setGame(game.name, game);
+  return result;
 }
 
 function gamePlayerSlots(db, game) {
@@ -352,7 +369,7 @@ const handlers = {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
     const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status [scope:], /stats, /game-stats — everyone (spectator view)'];
     if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
-    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate — host commands (open forms)', '• /start, /stop, /delete-game — host: run and remove game sessions');
+    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld — host commands (open forms)', '• /start, /stop, /delete-game — host: run and remove game sessions (/start generates the multiworld if needed)');
     if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
     return lines.join('\n');
   },
@@ -441,6 +458,8 @@ const handlers = {
     const name = String(ctx.options.name || ctx.modal?.fields?.name || '').trim();
     if (!name) throw new UserError('Provide a game name.');
     const password = ctx.options.password || ctx.modal?.fields?.password || null;
+    const seedRaw = String(ctx.options.seed ?? ctx.modal?.fields?.seed ?? '').trim();
+    if (seedRaw !== '' && !Number.isInteger(Number(seedRaw))) throw new UserError('Seed must be an integer.');
     const slug = ctx.ap.slugify(name);
     if (ctx.db.getGame(slug)) throw new UserError(`A game named "${name}" already exists.`);
     // A new game discards previous player registrations and their uploaded
@@ -458,6 +477,7 @@ const handlers = {
       createdBy: ctx.userId,
       status: 'setup',
       playerIds: [],
+      requestedSeed: seedRaw || null,
       multidata: null,
       seed: null,
       seedNumber: null,
@@ -466,7 +486,7 @@ const handlers = {
       createdAt: new Date().toISOString(),
     };
     ctx.db.setGame(slug, game);
-    return `Created game **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /generate.`;
+    return `Created game **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
   },
 
   async 'upload-apworld'(ctx) {
@@ -481,37 +501,10 @@ const handlers = {
     return `Uploaded **${saved}** — apworlds are global and used by every game (${all.length} stored: ${all.join(', ')}).`;
   },
 
-  async generate(ctx) {
-    const game = resolveGame(ctx, ctx.options.game || ctx.modal?.fields?.game);
-    if (game.status === 'running') throw new UserError('This game is running; /stop it first.');
-    const seedRaw = ctx.options.seed ?? ctx.modal?.fields?.seed;
-    let seed;
-    if (seedRaw !== undefined && seedRaw !== null && String(seedRaw).trim() !== '') {
-      seed = Number(seedRaw);
-      if (!Number.isInteger(seed)) throw new UserError('Seed must be an integer.');
-    }
-    game.status = 'generating';
-    ctx.db.setGame(game.name, game);
-    const result = await ctx.ap.generateGame(ctx.config, ctx.db, game, seed);
-    game.status = 'generated';
-    game.multidata = result.multidata;
-    game.spoiler = result.spoiler;
-    game.seed = result.seed;
-    game.seedNumber = result.seedNumber;
-    game.generatedAt = new Date().toISOString();
-    ctx.db.setGame(game.name, game);
-    return [
-      `Generated multiworld for **${game.name}** (seed ${result.seedNumber}, id ${result.seed}).`,
-      `Players (${result.players.length}): ${result.players.join(', ')}`,
-      `Multidata: \`${result.multidata}\``,
-      `Spoiler log: \`${result.spoiler}\``,
-      'Start it with /start.',
-    ].join('\n');
-  },
-
   async start(ctx) {
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status === 'running' && ctx.ap.isServerProcessAlive(game)) throw new UserError('This game is already running.');
+    const gen = await ensureGenerated(ctx, game);
     let port = ctx.options.port;
     if (!port) {
       const used = new Set(ctx.db.listGames().map((g) => g.port).filter(Boolean));
@@ -530,9 +523,10 @@ const handlers = {
     game.startedAt = new Date().toISOString();
     ctx.db.setGame(game.name, game);
     return [
+      gen ? `Generated multiworld for **${game.name}** (seed ${game.seedNumber}, id ${game.seed}; players: ${gen.players.join(', ')}; spoiler: \`${game.spoiler}\`).` : null,
       `Server for **${game.name}** is running: \`${ctx.config.publicHost}:${port}\`${game.password ? ' (password required)' : ' (no password)'}.`,
       `Seed: ${game.seedNumber ?? game.seed ?? '?'}, log: \`${logFile}\``,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   },
 
   async stop(ctx) {
@@ -638,6 +632,5 @@ export async function handleModal(customId, ctx) {
   if (customId === MODAL_REGISTER) return handlers.register(ctx);
   if (customId === MODAL_UPLOAD_APWORLD) return handlers['upload-apworld'](ctx);
   if (customId === MODAL_SETUP_GAME) return handlers['setup-game'](ctx);
-  if (customId === MODAL_GENERATE) return handlers.generate(ctx);
   throw new UserError('Unknown form.');
 }

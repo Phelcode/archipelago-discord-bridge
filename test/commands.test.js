@@ -7,8 +7,8 @@ import { Store } from '../src/store.js';
 import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
-  registerModal, uploadApworldModal, setupGameModal, generateModal,
-  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME, MODAL_GENERATE,
+  registerModal, uploadApworldModal, setupGameModal,
+  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
 } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
@@ -345,7 +345,6 @@ test('form commands take no inline options and always open a modal', () => {
     register: MODAL_REGISTER,
     'upload-apworld': MODAL_UPLOAD_APWORLD,
     'setup-game': MODAL_SETUP_GAME,
-    generate: MODAL_GENERATE,
   };
   for (const [name, customId] of Object.entries(expectedModal)) {
     assert.ok(ALWAYS_MODAL[name], `${name} is always-modal`);
@@ -379,11 +378,7 @@ test('modal builders produce file-upload (type 19) and text (type 4) components 
   assert.equal(setup.custom_id, 'bridge_setup_game');
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'name'));
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'password'));
-
-  const gen = generateModal().toJSON();
-  assert.equal(gen.custom_id, 'bridge_generate');
-  assert.ok(gen.components.some((c) => c.component.type === 4 && c.component.custom_id === 'game'));
-  assert.ok(gen.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
+  assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
 });
 
 test('profile replaces the built-in /me name', () => {
@@ -414,27 +409,76 @@ test('profile shows role/registration and sets the private-responses preference'
   await assert.rejects(() => handleCommand('profile', ctx), /private.*public/);
 });
 
-test('setup-game and generate read fields from modal submits', async () => {
+test('setup-game modal stores name/password/seed; /start generates then runs', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
-  ctx.modal = { fields: { name: 'Modal Game', password: 'pw' }, files: {} };
+  ctx.modal = { fields: { name: 'Modal Game', password: 'pw', seed: '424242' }, files: {} };
   const out = await handleCommand('setup-game', ctx);
   assert.match(out, /modal-game/);
+  assert.match(out, /\/start/);
   assert.equal(ctx.db.getGame('modal-game').password, 'pw');
+  assert.equal(ctx.db.getGame('modal-game').requestedSeed, '424242');
 
-  const genCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'host-1' });
-  genCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  const g = genCtx.db.getGame('modal-game');
+  const startCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'host-1' });
+  startCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const g = startCtx.db.getGame('modal-game');
   g.playerIds = ['user-1'];
-  genCtx.db.setGame('modal-game', g);
-  genCtx.ap = { ...realAp, async generateGame(c, d, game, seed) { return { multidata: '/tmp/x.zip', spoiler: '/tmp/s.txt', seed: '1', seedNumber: seed, players: ['Alice'], log: '' }; } };
-  genCtx.modal = { fields: { game: 'modal-game', seed: '424242' }, files: {} };
-  const genOut = await handleCommand('generate', genCtx);
-  assert.match(genOut, /424242/);
-  assert.equal(genCtx.db.getGame('modal-game').seedNumber, 424242);
+  startCtx.db.setGame('modal-game', g);
+  let generatedWith;
+  startCtx.ap = {
+    ...realAp,
+    async generateGame(c, d, game, seed) {
+      generatedWith = seed;
+      return { multidata: path.join(ctx.config.dataDir, 'x.zip'), spoiler: '/tmp/s.txt', seed: '1', seedNumber: Number(seed), players: ['Alice'], log: '' };
+    },
+    startGame: () => ({ pid: 123, logFile: '/tmp/log' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => true,
+  };
+  startCtx.options = { game: 'modal-game' };
+  const startOut = await handleCommand('start', startCtx);
+  assert.equal(generatedWith, 424242);
+  assert.match(startOut, /Generated multiworld/);
+  assert.match(startOut, /running/);
+  assert.equal(startCtx.db.getGame('modal-game').status, 'running');
+  assert.equal(startCtx.db.getGame('modal-game').seedNumber, 424242);
 
-  genCtx.modal = { fields: { game: 'modal-game', seed: 'abc' }, files: {} };
-  await assert.rejects(() => handleCommand('generate', genCtx), /integer/);
+  await assert.rejects(() => handleCommand('start', startCtx), /already running/);
+});
+
+test('setup-game rejects a non-integer seed in the form', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.modal = { fields: { name: 'g', password: '', seed: 'abc' }, files: {} };
+  await assert.rejects(() => handleCommand('setup-game', ctx), /integer/);
+});
+
+test('start reuses an existing generation instead of regenerating', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  const zip = path.join(ctx.config.dataDir, 'x.zip');
+  fs.writeFileSync(zip, 'PK');
+  ctx.db.setGame('g', { name: 'g', status: 'generated', multidata: zip, seed: '1', seedNumber: 5, playerIds: [] });
+  let genCalled = false;
+  ctx.ap = {
+    ...realAp,
+    generateGame: async () => { genCalled = true; throw new Error('should not be called'); },
+    startGame: () => ({ pid: 1, logFile: '/tmp/l' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => true,
+  };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('start', ctx);
+  assert.equal(genCalled, false);
+  assert.match(out, /running/);
+  assert.doesNotMatch(out, /Generated multiworld/);
+});
+
+test('start with a bad stored seed fails clearly and stays in setup', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], requestedSeed: 'abc' });
+  ctx.options = { game: 'g' };
+  await assert.rejects(() => handleCommand('start', ctx), /integer/);
+  assert.equal(ctx.db.getGame('g').status, 'setup');
 });
 
 function mockClient({ failGuild = false, failAppEdit = false } = {}) {
