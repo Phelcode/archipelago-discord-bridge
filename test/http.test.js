@@ -133,6 +133,39 @@ test('ephemeral command defers with the ephemeral flag', async () => {
   assert.equal(body.data.flags, 64);
 });
 
+test('user-install DM interaction (no guild, no member) is handled', async () => {
+  const config2 = makeConfig();
+  config2.discordGuildId = null;
+  const db2 = new Store(path.join(config2.dataDir, 'db.json'));
+  const app2 = createApp({ config: config2, db: db2, api: fakeApi });
+  await new Promise((resolve) => {
+    const s = app2.listen(0, '127.0.0.1', resolve);
+    app2.on('listening', () => {});
+    setTimeout(() => resolve(), 50);
+  });
+  const port = app2.address().port;
+  sent = [];
+  const raw = JSON.stringify({
+    type: 2, token: 'dm1', guild_id: null, context: 1,
+    data: { name: 'help', options: [] },
+    user: { id: 'user-1', username: 'tester' },
+    authorizing_integration_owners: { '1': 'user-1' },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = Buffer.from(nacl.sign.detached(Buffer.from(timestamp + raw), keypair.secretKey)).toString('hex');
+  const res = await fetch(`http://127.0.0.1:${port}/interactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': signature, 'X-Signature-Timestamp': timestamp },
+    body: raw,
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).type, 5);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].payload.content, /\/stats/);
+  app2.close();
+});
+
 test('health endpoint', async () => {
   const res = await fetch(`${baseUrl}/health`);
   assert.equal(res.status, 200);

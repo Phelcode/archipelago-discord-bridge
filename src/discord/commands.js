@@ -84,6 +84,33 @@ export const COMMAND_DEFINITIONS = [
   },
 ];
 
+// Installation contexts (where the app can be installed) and interaction
+// contexts (surfaces where commands can be used). GUILD_INSTALL=0,
+// USER_INSTALL=1; GUILD=0, BOT_DM=1, PRIVATE_CHANNEL=2.
+export const INTEGRATION_TYPES_BOTH = [0, 1];
+export const CONTEXTS_ALL = [0, 1, 2];
+export const GUILD_COMMAND_DEF = { integration_types: [0], contexts: [0] };
+
+export function globalCommandPayload(definitions) {
+  return definitions.map((def) => ({
+    ...def,
+    integration_types: INTEGRATION_TYPES_BOTH,
+    contexts: CONTEXTS_ALL,
+  }));
+}
+
+export function guildCommandPayload(definitions) {
+  return definitions.map((def) => ({ ...def, ...GUILD_COMMAND_DEF }));
+}
+
+export async function registerAllCommands(api, { guildId, definitions }) {
+  await api.updateApplication({ integration_types: INTEGRATION_TYPES_BOTH });
+  await api.registerCommands(globalCommandPayload(definitions));
+  if (guildId) {
+    await api.registerGuildCommands(guildId, guildCommandPayload(definitions));
+  }
+}
+
 export const PERMISSIONS = {
   help: 'all',
   register: 'all',

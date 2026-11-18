@@ -32,8 +32,17 @@ Roles are assigned by Discord ID:
 
 1. Create an application at <https://discord.com/developers/applications>.
    - Copy the **Application ID**, **Public Key**, and a **Bot token** (the token is
-     only used for REST calls like registering commands — the app is added with the
-     `applications.commands` scope only, no bot/gateway scopes).
+     only used for REST calls like registering commands — no bot/gateway scopes are
+     needed; the app never connects to the gateway).
+   - Under *Installation*, enable **both** *Guild Install* and *User Install*
+     (`integration_types: [0, 1]`), so the app can be added to servers **and** to
+     individual users. The app also tries to set this itself via
+     `PATCH /applications/@me` at boot. With both enabled, users get the "Add App"
+     option in their DM list / the app's profile to install it to their account.
+   - Commands are registered for both installation types and all interaction
+     contexts (guild channels, the app DM, and other DMs/group DMs for user
+     installs) — globally, and additionally as guild commands in `DISCORD_GUILD_ID`
+     (if set) so changes show up instantly in your server.
    - Under *General Information → Interactions Endpoint URL*, set an HTTPS URL that
      reaches this service, e.g. `https://bridge.example.com/interactions`.
      **Note:** an app and a bot are the same application object, the only difference
@@ -47,7 +56,10 @@ Roles are assigned by Discord ID:
      the container for production. The only no-public-URL alternative is Discord
      *Activities* (embedded in-client apps proxied by the Discord client itself) —
      a different architecture, not slash commands served by your server.
-   - Add the app to your server with `applications.commands` scope.
+   - Add the app to your server (and/or to your user) with the `applications.commands`
+     scope. Note: if `DISCORD_GUILD_ID` is set, interactions are only accepted from
+     that guild — user-install DMs (which have no guild) are then rejected too, so
+     leave it unset if you want the app usable in DMs.
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
    `DISCORD_PUBLIC_KEY`, `DISCORD_OWNER_ID` (your Discord user ID) and
    `AP_SERVER_HOST` (the public hostname players use to reach Archipelago servers).

@@ -17,8 +17,14 @@ export function createDiscordApi({ token, applicationId, apiBase }) {
 
   return {
     call,
+    updateApplication(patch) {
+      return call('PATCH', '/applications/@me', patch);
+    },
     registerCommands(definitions) {
       return call('PUT', `/applications/${applicationId}/commands`, definitions);
+    },
+    registerGuildCommands(guildId, definitions) {
+      return call('PUT', `/applications/${applicationId}/guilds/${guildId}/commands`, definitions);
     },
     editOriginal(interactionToken, payload) {
       return call('PATCH', `/webhooks/${applicationId}/${interactionToken}/messages/@original`, payload);

@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { Store } from './store.js';
 import { verifySignature, isFreshTimestamp } from './discord/verify.js';
 import { createDiscordApi } from './discord/api.js';
-import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, parseInteraction, handleCommand, UserError } from './discord/commands.js';
+import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, parseInteraction, handleCommand, registerAllCommands, UserError } from './discord/commands.js';
 import { canHost, isOwner } from './discord/permissions.js';
 
 function readBody(req) {
@@ -84,6 +84,9 @@ export function createApp({ config, db, api }) {
       sendJson(res, 400, { error: 'unsupported interaction type' });
       return;
     }
+    // When DISCORD_GUILD_ID is set, only interactions from that guild are
+    // accepted; user-installed (DM / private channel) interactions have no
+    // guild_id and are rejected in that case.
     if (config.discordGuildId && interaction.guild_id !== config.discordGuildId) {
       sendJson(res, 403, { error: 'wrong guild' });
       return;
@@ -140,10 +143,10 @@ async function main() {
     console.log(`archipelago-discord-bridge listening on port ${config.port} (data dir: ${config.dataDir})`);
   });
   try {
-    await api.registerCommands(COMMAND_DEFINITIONS);
-    console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord.`);
+    await registerAllCommands(api, { guildId: config.discordGuildId, definitions: COMMAND_DEFINITIONS });
+    console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord (guild + user install).`);
   } catch (err) {
-    console.error('Could not register slash commands (interactions endpoint still works if commands were registered before):', err.message);
+    console.error('Could not register slash commands with Discord (set installation contexts and commands in the dev portal if needed):', err.message);
   }
 }
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
-import { handleCommand, parseInteraction, UserError } from '../src/discord/commands.js';
+import { handleCommand, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, COMMAND_DEFINITIONS } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -265,6 +265,40 @@ test('role add/remove/list manage hosts', async () => {
   ctx.subcommand = 'remove';
   await handleCommand('role', ctx);
   assert.equal(ctx.db.isHost('host-9'), false);
+});
+
+test('command payloads support guild and user install in all contexts', () => {
+  const global = globalCommandPayload(COMMAND_DEFINITIONS);
+  assert.ok(global.length >= 15);
+  for (const def of global) {
+    assert.deepEqual(def.integration_types, [0, 1]);
+    assert.deepEqual(def.contexts, [0, 1, 2]);
+  }
+  const guild = guildCommandPayload(COMMAND_DEFINITIONS);
+  for (const def of guild) {
+    assert.deepEqual(def.integration_types, [0]);
+    assert.deepEqual(def.contexts, [0]);
+  }
+});
+
+test('registerAllCommands updates the app and registers global (+guild) commands', async () => {
+  const calls = [];
+  const api = {
+    async updateApplication(patch) { calls.push(['app', patch]); },
+    async registerCommands(defs) { calls.push(['global', defs]); },
+    async registerGuildCommands(guildId, defs) { calls.push(['guild', guildId, defs]); },
+  };
+  await registerAllCommands(api, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
+  assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
+  assert.equal(calls[1][0], 'global');
+  assert.equal(calls[1][1][0].integration_types[1], 1);
+  assert.equal(calls[2][0], 'guild');
+  assert.equal(calls[2][1], 'g1');
+
+  calls.length = 0;
+  await registerAllCommands(api, { guildId: null, definitions: COMMAND_DEFINITIONS });
+  assert.equal(calls.filter((c) => c[0] === 'guild').length, 0);
+  assert.equal(calls.filter((c) => c[0] === 'global').length, 1);
 });
 
 test('role rejects assigning the owner', async () => {
