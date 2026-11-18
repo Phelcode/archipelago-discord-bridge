@@ -85,6 +85,12 @@ Roles are assigned by Discord ID:
    boot (`AP_UPDATE=false` keeps the existing copy; `AP_REPO_URL`/`AP_BRANCH`
    override the source). The image bakes in only Archipelago's *Python
    dependencies* (`docker/requirements-ap.txt`) in a venv at `/opt/ap-venv`.
+   The base image is `node:22-trixie-slim` (Debian 13, Python 3.13) because
+   Archipelago requires Python 3.12–3.13 and rejects bookworm's Python 3.11.
+   After pulling this change, **rebuild** the image (`docker compose up -d --build`) —
+   the self-update only syncs app code, not the base image or the venv. The
+   Dockerfile fails the build if the venv Python is outside 3.12–3.13, and the
+   entrypoint logs a clear warning on boot if AP can't be imported.
 
 ## Commands
 

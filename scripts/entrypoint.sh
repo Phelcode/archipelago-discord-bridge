@@ -55,6 +55,14 @@ if [ ! -x "$AP_VENV/bin/python" ]; then
   "$AP_VENV/bin/pip" install --quiet --no-cache-dir -r "$APP_RUN_DIR/docker/requirements-ap.txt"
 fi
 
+# Sanity check: Archipelago rejects unsupported Python versions at import time
+# (ModuleUpdate raises RuntimeError). Catch that here with a clear warning
+# instead of a traceback from /generate later. Fix by rebuilding the image so
+# the venv is created with a supported Python (3.12-3.13, e.g. node:22-trixie-slim).
+if ! (cd "$AP_DIR" && SKIP_REQUIREMENTS_UPDATE=1 "$AP_VENV/bin/python" -c 'import ModuleUpdate' >/dev/null 2>&1); then
+  echo "[entrypoint] WARNING: $AP_VENV/bin/python ($("$AP_VENV/bin/python" --version 2>&1)) cannot import Archipelago from $AP_DIR — AP requires Python 3.12-3.13. Rebuild the image (docker compose up -d --build) so /opt/ap-venv uses a supported Python."
+fi
+
 export AP_DIR
 export AP_PYTHON="$AP_VENV/bin/python"
 export DATA_DIR="${DATA_DIR:-/data}"
