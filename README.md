@@ -36,12 +36,17 @@ Roles are assigned by Discord ID:
      `applications.commands` scope only, no bot/gateway scopes).
    - Under *General Information → Interactions Endpoint URL*, set an HTTPS URL that
      reaches this service, e.g. `https://bridge.example.com/interactions`.
-     **Note:** this is inherent to slash-command *apps* — Discord's servers push
-     interactions to your endpoint, so it must be reachable from the internet (a
-     tunnel such as cloudflared pointed at the container's port is the usual way to
-     run it locally). Discord *Activities* (embedded in-client apps) are a different
-     thing: they run inside the Discord client and need no public URL, but they are
-     iframe UIs, not slash commands served by your server. This bridge is the former.
+     **Note:** an app and a bot are the same application object, the only difference
+     being whether a bot user is declared — and declaring no bot user is exactly what
+     makes the HTTP endpoint the *only* way to receive interactions (gateway
+     `INTERACTION_CREATE` needs a connected bot client). But the endpoint is a URL
+     that Discord's servers POST to, so per Discord's own docs "Discord needs a
+     public URL to send them": the portal requires HTTPS, PINGs the URL on save and
+     rejects localhost/plain HTTP. So it must be internet-reachable — a tunnel
+     (cloudflared/ngrok) for local runs, or a domain + TLS reverse proxy in front of
+     the container for production. The only no-public-URL alternative is Discord
+     *Activities* (embedded in-client apps proxied by the Discord client itself) —
+     a different architecture, not slash commands served by your server.
    - Add the app to your server with `applications.commands` scope.
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
    `DISCORD_PUBLIC_KEY`, `DISCORD_OWNER_ID` (your Discord user ID) and
