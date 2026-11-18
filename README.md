@@ -87,6 +87,9 @@ Roles are assigned by Discord ID:
    pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
    to disable, or override `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in
    `./data` (a volume), so updates never wipe games, uploads or role assignments.
+   Games that were **running when the container stopped are restarted automatically
+   on boot** (server respawned with the existing multiworld, on the old port or the
+   next free one); games interrupted mid-generation are marked stopped.
 
    **Archipelago itself is not in this repo.** On boot the entrypoint clones
    [Archipelago](https://github.com/ArchipelagoMW/Archipelago) into

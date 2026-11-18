@@ -197,6 +197,15 @@ export function isServerProcessAlive(game) {
   try { process.kill(game.pid, 0); return true; } catch { return false; }
 }
 
+export function isPortListening(port, host = '127.0.0.1', timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, host);
+    socket.once('connect', () => { socket.end(); resolve(true); });
+    socket.once('error', () => resolve(false));
+    setTimeout(() => { socket.destroy(); resolve(false); }, timeoutMs);
+  });
+}
+
 export async function waitForPort(port, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
