@@ -162,8 +162,12 @@ async function main() {
       intents: config.gatewayIntents,
       url: config.gatewayUrl,
       onInteraction: async (interaction) => {
-        const response = await dispatch(interaction);
-        if (response) await api.respondToInteraction(interaction.id, interaction.token, response);
+        try {
+          const response = await dispatch(interaction);
+          if (response) await api.respondToInteraction(interaction.id, interaction.token, response);
+        } catch (err) {
+          console.error('[gateway] failed to send initial interaction response:', err.message);
+        }
       },
     });
     console.log('Gateway mode: receiving interactions over the Discord gateway (no public URL needed).');
