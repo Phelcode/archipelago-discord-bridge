@@ -77,7 +77,10 @@ export function startGateway({
     const target = sessionId && resumeUrl ? resumeUrl : url;
     logger.info(`[gateway] connecting to ${target}${sessionId ? ' (resume)' : ''}`);
     ws = new WebSocketImpl(target);
-    ws.onopen = () => { reconnectDelay = minReconnectDelayMs; };
+    ws.onopen = () => {
+      reconnectDelay = minReconnectDelayMs;
+      ackReceived = true; // fresh connection: don't inherit a stale missing-ACK state
+    };
     ws.onmessage = (event) => {
       let payload;
       try {
@@ -106,6 +109,7 @@ export function startGateway({
         if (!d && sessionId) sessionId = null;
         ws?.close(4000);
       } else if (op === 10) {
+        ackReceived = true;
         startHeartbeat(d.heartbeat_interval);
         identifyOrResume();
       } else if (op === 11) {

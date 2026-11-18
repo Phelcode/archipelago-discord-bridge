@@ -33,6 +33,7 @@ class FakeGateway {
       }
       close(code = 1000) {
         this.readyState = 3;
+        this.closedWith = code;
         this.onclose?.({ code });
       }
       serverSend(payload) {
@@ -135,6 +136,57 @@ test('gateway dispatch answers via the interaction callback endpoint', async () 
   assert.equal(edits.length, 1);
   assert.match(edits[0].payload.content, /\/stats/);
   gwClient.stop();
+});
+
+test('gateway recovers after a missing ACK: reconnects and does not flap again', async () => {
+  // ACK heartbeats only on the second and later sockets (first connection loses ACKs)
+  const sockets = [];
+  let count = 0;
+  class FlakyAckWS {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      count += 1;
+      this.sockIndex = count;
+      sockets.push(this);
+      setTimeout(() => {
+        this.readyState = 1;
+        this.onopen?.();
+        this.serverSend({ op: 10, d: { heartbeat_interval: 40 } });
+      }, 0);
+    }
+    send(data) {
+      const p = JSON.parse(data);
+      if (p.op === 3 && this.sockIndex >= 2) this.serverSend({ op: 11 });
+    }
+    close(code = 1000) {
+      this.readyState = 3;
+      this.closedWith = code;
+      this.onclose?.({ code });
+    }
+    serverSend(p) {
+      this.onmessage?.({ data: JSON.stringify(p) });
+    }
+  }
+  const gwClient = startGateway({
+    token: 'tok',
+    url: 'wss://fake-gateway',
+    WebSocketImpl: FlakyAckWS,
+    onInteraction: () => {},
+    minReconnectDelayMs: 5,
+    maxReconnectDelayMs: 20,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+  try {
+    await sleep(250);
+    assert.ok(sockets.length >= 2, 'reconnected after missing ACK');
+    assert.ok(sockets.some((s) => s.closedWith === 4000), 'closed with 4000 on missing ACK');
+    const countAfter = sockets.length;
+    await sleep(250);
+    assert.equal(sockets.length, countAfter, 'no further reconnects once ACKs arrive');
+  } finally {
+    gwClient.stop();
+  }
 });
 
 test('gateway does not reconnect on fatal close codes', async () => {
