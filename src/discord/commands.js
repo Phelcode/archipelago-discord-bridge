@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import { ModalBuilder, LabelBuilder, FileUploadBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { roleOf, canHost, isOwner } from './permissions.js';
 import * as ap from '../ap/manager.js';
 
@@ -9,7 +10,6 @@ export class UserError extends Error {}
 const STRING = 3;
 const INTEGER = 4;
 const USER = 6;
-const ATTACHMENT = 10;
 
 const gameOption = (required) => ({
   name: 'game', description: 'Game session name', type: STRING, required,
@@ -17,11 +17,7 @@ const gameOption = (required) => ({
 
 export const COMMAND_DEFINITIONS = [
   { name: 'help', description: 'Show the commands available to your role' },
-  {
-    name: 'register',
-    description: 'Register as a player (opens an upload dialog for your player yaml)',
-    options: [],
-  },
+  { name: 'register', description: 'Register as a player (opens an upload form for your player yaml)', options: [] },
   { name: 'unregister', description: 'Remove your player registration' },
   {
     name: 'profile',
@@ -42,21 +38,9 @@ export const COMMAND_DEFINITIONS = [
   { name: 'join', description: 'Join a game session with your registered player yaml', options: [gameOption(true)] },
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
-  {
-    name: 'setup-game',
-    description: '[host] Create a new game session (opens a form)',
-    options: [],
-  },
-  {
-    name: 'upload-apworld',
-    description: '[host] Upload a custom .apworld file to a game (opens an upload dialog)',
-    options: [],
-  },
-  {
-    name: 'generate',
-    description: '[host] Generate the multiworld for a game (opens a form)',
-    options: [],
-  },
+  { name: 'setup-game', description: '[host] Create a new game session (opens a form)', options: [] },
+  { name: 'upload-apworld', description: '[host] Upload a custom .apworld file to a game (opens an upload form)', options: [] },
+  { name: 'generate', description: '[host] Generate the multiworld for a game (opens a form)', options: [] },
   {
     name: 'start',
     description: '[host] Start the Archipelago server for a generated game',
@@ -95,7 +79,6 @@ export const COMMAND_DEFINITIONS = [
 // USER_INSTALL=1; GUILD=0, BOT_DM=1, PRIVATE_CHANNEL=2.
 export const INTEGRATION_TYPES_BOTH = [0, 1];
 export const CONTEXTS_ALL = [0, 1, 2];
-export const GUILD_COMMAND_DEF = { integration_types: [0], contexts: [0] };
 
 export function globalCommandPayload(definitions) {
   return definitions.map((def) => ({
@@ -106,15 +89,20 @@ export function globalCommandPayload(definitions) {
 }
 
 export function guildCommandPayload(definitions) {
-  return definitions.map((def) => ({ ...def, ...GUILD_COMMAND_DEF }));
+  return definitions.map((def) => ({ ...def, integration_types: [0], contexts: [0] }));
 }
 
-export async function registerAllCommands(api, { guildId, definitions }) {
-  await api.updateApplication({ integration_types: INTEGRATION_TYPES_BOTH });
-  await api.registerCommands(globalCommandPayload(definitions));
+export async function registerAllCommands(client, { guildId, definitions }) {
+  try {
+    await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
+  } catch (err) {
+    console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
+  }
+  await client.application.commands.set(globalCommandPayload(definitions));
   if (guildId) {
     try {
-      await api.registerGuildCommands(guildId, guildCommandPayload(definitions));
+      const guild = await client.guilds.fetch(guildId);
+      await guild.commands.set(guildCommandPayload(definitions));
     } catch (err) {
       // Common when the app isn't installed in that guild with the bot scope
       // (403 Missing Access). Global commands are already registered and
@@ -146,10 +134,7 @@ export const PERMISSIONS = {
 
 export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 'hints', 'role']);
 
-// Modal fallback for file uploads: used when the slash command's attachment
-// option was left empty. File Upload is component type 19 inside a Label
-// (type 18); on submit, MODAL_SUBMIT (type 5) carries the file's attachment
-// IDs in component.values, resolved via data.resolved.attachments.
+// Modals (components v2: File Upload type 19 / Text Input type 4 inside a Label).
 export const MODAL_REGISTER = 'bridge_register';
 export const MODAL_UPLOAD_APWORLD = 'bridge_upload_apworld';
 export const MODAL_SETUP_GAME = 'bridge_setup_game';
@@ -161,120 +146,63 @@ export const MODAL_PERMISSIONS = {
   [MODAL_GENERATE]: 'host',
 };
 
-const label = (text, description, component) => ({ type: 18, label: text, description, component });
 const fileUploadField = (customId, labelText) =>
-  label(labelText, 'Upload the file here', { type: 19, custom_id: customId, min_values: 1, max_values: 1, required: true });
+  new LabelBuilder()
+    .setLabel(labelText)
+    .setDescription('Upload the file here')
+    .setFileUploadComponent(new FileUploadBuilder().setCustomId(customId).setMinValues(1).setMaxValues(1).setRequired(true));
 const textField = (customId, labelText, { required = true, maxLength = 100 } = {}) =>
-  label(labelText, undefined, { type: 4, custom_id: customId, style: 1, required, max_length: maxLength });
+  new LabelBuilder()
+    .setLabel(labelText)
+    .setTextInputComponent(new TextInputBuilder().setCustomId(customId).setStyle(TextInputStyle.Short).setRequired(required).setMaxLength(maxLength));
 
-export function registerModalResponse() {
-  return {
-    type: 9,
-    data: {
-      custom_id: MODAL_REGISTER,
-      title: 'Register as player',
-      components: [
-        fileUploadField('yaml', 'Player yaml file (.yaml)'),
-        textField('name', 'Slot name override (optional)', { required: false }),
-      ],
-    },
-  };
+export function registerModal() {
+  return new ModalBuilder()
+    .setCustomId(MODAL_REGISTER)
+    .setTitle('Register as player')
+    .addLabelComponents(
+      fileUploadField('yaml', 'Player yaml file (.yaml)'),
+      textField('name', 'Slot name override (optional)', { required: false }),
+    );
 }
 
-export function uploadApworldModalResponse() {
-  return {
-    type: 9,
-    data: {
-      custom_id: MODAL_UPLOAD_APWORLD,
-      title: 'Upload .apworld',
-      components: [
-        textField('game', 'Game session name'),
-        fileUploadField('file', '.apworld file'),
-      ],
-    },
-  };
+export function uploadApworldModal() {
+  return new ModalBuilder()
+    .setCustomId(MODAL_UPLOAD_APWORLD)
+    .setTitle('Upload .apworld')
+    .addLabelComponents(
+      textField('game', 'Game session name'),
+      fileUploadField('file', '.apworld file'),
+    );
 }
 
-export function setupGameModalResponse() {
-  return {
-    type: 9,
-    data: {
-      custom_id: MODAL_SETUP_GAME,
-      title: 'Create game session',
-      components: [
-        textField('name', 'Game session name'),
-        textField('password', 'Server password (optional)', { required: false, maxLength: 100 }),
-      ],
-    },
-  };
+export function setupGameModal() {
+  return new ModalBuilder()
+    .setCustomId(MODAL_SETUP_GAME)
+    .setTitle('Create game session')
+    .addLabelComponents(
+      textField('name', 'Game session name'),
+      textField('password', 'Server password (optional)', { required: false }),
+    );
 }
 
-export function generateModalResponse() {
-  return {
-    type: 9,
-    data: {
-      custom_id: MODAL_GENERATE,
-      title: 'Generate multiworld',
-      components: [
-        textField('game', 'Game session name'),
-        textField('seed', 'Seed (optional, random if empty)', { required: false, maxLength: 20 }),
-      ],
-    },
-  };
+export function generateModal() {
+  return new ModalBuilder()
+    .setCustomId(MODAL_GENERATE)
+    .setTitle('Generate multiworld')
+    .addLabelComponents(
+      textField('game', 'Game session name'),
+      textField('seed', 'Seed (optional, random if empty)', { required: false, maxLength: 20 }),
+    );
 }
 
 // Commands that always answer with a modal instead of taking inline options.
 export const ALWAYS_MODAL = {
-  register: registerModalResponse,
-  'upload-apworld': uploadApworldModalResponse,
-  'setup-game': setupGameModalResponse,
-  generate: generateModalResponse,
+  register: registerModal,
+  'upload-apworld': uploadApworldModal,
+  'setup-game': setupGameModal,
+  generate: generateModal,
 };
-
-export function parseInteraction(interaction) {
-  const data = interaction.data || {};
-  if (interaction.type === 3) {
-    const resolved = data.resolved || {};
-    const parsed = { options: {}, attachments: {}, subcommand: null, subOptions: {}, modalCustomId: data.custom_id, modal: { fields: {}, files: {} } };
-    const walk = (comp) => {
-      if (!comp || typeof comp !== 'object') return;
-      if (comp.type === 18 && comp.component) return walk(comp.component); // Label wrapper
-      if (comp.type === 1 && Array.isArray(comp.components)) { comp.components.forEach(walk); return; } // legacy action row
-      if (comp.type === 19 || comp.type === 11) { // file upload
-        parsed.modal.files[comp.custom_id] = (comp.values || [])
-          .map((id) => resolved.attachments?.[id])
-          .filter(Boolean);
-      } else if (comp.type === 4) { // text input
-        parsed.modal.fields[comp.custom_id] = comp.value;
-      }
-    };
-    (data.components || []).forEach(walk);
-    return parsed;
-  }
-  const resolved = data.resolved || {};
-  const parsed = { options: {}, attachments: {}, subcommand: null, subOptions: {} };
-  const top = data.options || [];
-  const sub = top.find((o) => o.type === 1);
-  if (sub) {
-    parsed.subcommand = sub.name;
-    for (const opt of sub.options || []) {
-      if (opt.type === USER) parsed.subOptions[opt.name] = resolved.users?.[opt.value]?.id || opt.value;
-      else parsed.subOptions[opt.name] = opt.value;
-    }
-    return parsed;
-  }
-  for (const opt of top) {
-    if (opt.type === ATTACHMENT) {
-      const att = resolved.attachments?.[opt.value];
-      if (att) parsed.attachments[opt.name] = att;
-    } else if (opt.type === USER) {
-      parsed.options[opt.name] = resolved.users?.[opt.value]?.id || opt.value;
-    } else {
-      parsed.options[opt.name] = opt.value;
-    }
-  }
-  return parsed;
-}
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
 
@@ -343,7 +271,7 @@ function validateApworld(filename, buffer) {
   }
 }
 
-function formatStats(config, db, game, probeResult) {
+function formatStats(config, game, probeResult) {
   const room = probeResult.room || {};
   const lines = [
     `**Stats for "${game.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''} — server on ${config.publicHost}:${game.port}`,
@@ -356,7 +284,7 @@ function formatStats(config, db, game, probeResult) {
   return lines.join('\n');
 }
 
-function formatGameStats(config, db, game, probeResult) {
+function formatGameStats(game, probeResult) {
   const room = probeResult.room || {};
   let total = 0;
   let checked = 0;
@@ -391,17 +319,17 @@ const handlers = {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
     const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
     if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
-    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate, /start, /stop — host commands');
+    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate, /start, /stop — host commands (open forms)');
     if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
     return lines.join('\n');
   },
 
   async register(ctx) {
     const att = ctx.attachments.yaml || ctx.modal?.files?.yaml?.[0];
-    if (!att) throw new UserError('Attach a .yaml file with the "yaml" option or via the upload dialog.');
+    if (!att) throw new UserError('Attach a .yaml file in the form.');
     if (!/\.ya?ml$/i.test(att.filename)) throw new UserError(`"${att.filename}" is not a .yaml file.`);
     if (att.size > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
-    const buffer = await ctx.api.downloadAttachment(att.url);
+    const buffer = Buffer.from(await ctx.download(att.url));
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     const { slot, game } = parsePlayerYaml(buffer, ctx.options.name || ctx.modal?.fields?.name);
     const playersDir = path.join(ctx.config.dataDir, 'players');
@@ -423,7 +351,7 @@ const handlers = {
     const player = ctx.db.getPlayer(ctx.userId);
     const responses = ctx.options.responses;
     let confirmation = null;
-    if (responses !== undefined) {
+    if (responses !== undefined && responses !== null) {
       if (!['private', 'public'].includes(responses)) throw new UserError('responses must be "private" or "public".');
       ctx.db.setPreference(ctx.userId, 'privateResponses', responses === 'private');
       confirmation = `✅ Replies to your commands are now **${responses === 'private' ? 'private (only you can see them)' : 'public (everyone can see them)'}**.`;
@@ -500,6 +428,7 @@ const handlers = {
       playerIds: [],
       multidata: null,
       seed: null,
+      seedNumber: null,
       port: null,
       pid: null,
       createdAt: new Date().toISOString(),
@@ -511,9 +440,9 @@ const handlers = {
   async 'upload-apworld'(ctx) {
     const game = resolveGame(ctx, ctx.options.game || ctx.modal?.fields?.game);
     const att = ctx.attachments.file || ctx.modal?.files?.file?.[0];
-    if (!att) throw new UserError('Attach a .apworld file with the "file" option or via the upload dialog.');
+    if (!att) throw new UserError('Attach a .apworld file in the form.');
     if (att.size > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
-    const buffer = await ctx.api.downloadAttachment(att.url);
+    const buffer = Buffer.from(await ctx.download(att.url));
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     validateApworld(att.filename, buffer);
     const saved = ctx.ap.saveApworld(ctx.config, game, att.filename, buffer);
@@ -554,7 +483,7 @@ const handlers = {
     if (game.status === 'running' && ctx.ap.isServerProcessAlive(game)) throw new UserError('This game is already running.');
     let port = ctx.options.port;
     if (!port) {
-      const used = new Set(db_ports(ctx.db));
+      const used = new Set(ctx.db.listGames().map((g) => g.port).filter(Boolean));
       port = ctx.config.basePort;
       while (used.has(port)) port += 1;
     }
@@ -571,7 +500,7 @@ const handlers = {
     ctx.db.setGame(game.name, game);
     return [
       `Server for **${game.name}** is running: \`${ctx.config.publicHost}:${port}\`${game.password ? ' (password required)' : ' (no password)'}.`,
-      `Seed: ${game.seed ?? '?'}, log: \`${logFile}\``,
+      `Seed: ${game.seedNumber ?? game.seed ?? '?'}, log: \`${logFile}\``,
     ].join('\n');
   },
 
@@ -604,14 +533,14 @@ const handlers = {
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
     const probeResult = await ctx.ap.probe(ctx.config, game, 'stats', null, 30000, gamePlayerSlots(ctx.db, game));
-    return formatStats(ctx.config, ctx.db, game, probeResult);
+    return formatStats(ctx.config, game, probeResult);
   },
 
   async 'game-stats'(ctx) {
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
     const probeResult = await ctx.ap.probe(ctx.config, game, 'stats', null, 30000, gamePlayerSlots(ctx.db, game));
-    return formatGameStats(ctx.config, ctx.db, game, probeResult);
+    return formatGameStats(game, probeResult);
   },
 
   async hints(ctx) {
@@ -635,7 +564,7 @@ const handlers = {
   async role(ctx) {
     const sub = ctx.subcommand;
     if (sub === 'list') {
-      const lines = [`**Roles**`, `• owner: <@${ctx.config.discordOwnerId}> (from .env)`];
+      const lines = ['**Roles**', `• owner: <@${ctx.config.discordOwnerId}> (from .env)`];
       for (const id of ctx.db.data.hosts) lines.push(`• host: <@${id}>`);
       if (!ctx.db.data.hosts.length) lines.push('• host: (none)');
       return lines.join('\n');
@@ -656,10 +585,6 @@ const handlers = {
     throw new UserError('Unknown subcommand.');
   },
 };
-
-function db_ports(db) {
-  return db.listGames().map((g) => g.port).filter(Boolean);
-}
 
 export async function handleCommand(name, ctx) {
   const handler = handlers[name];

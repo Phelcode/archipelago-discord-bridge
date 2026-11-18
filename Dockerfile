@@ -26,7 +26,8 @@ ENV DATA_DIR=/data \
     AP_PYTHON=/opt/ap-venv/bin/python
 
 VOLUME ["/data"]
-# Bridge HTTP port (health check; interactions endpoint in DISCORD_GATEWAY=false mode)
+# Bridge HTTP port (health check only; interactions arrive over the Discord
+# gateway via discord.js, so this port does not need to be public)
 EXPOSE 3000
 # Archipelago game servers spawned by the bridge listen on BASE_PORT (default
 # 38281) and up — players connect to these. Adjust if you change BASE_PORT.

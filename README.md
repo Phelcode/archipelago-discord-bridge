@@ -3,13 +3,11 @@
 A Node.js Discord app that bridges Discord roles to
 [Archipelago](https://archipelago.gg) multiworld hosting.
 
-It receives slash-command interactions over the **Discord gateway** (default,
-`DISCORD_GATEWAY=true`): the app declares a bot user purely as a transport — it
-identifies with the bot token, heartbeats, and handles `INTERACTION_CREATE`. It
-never reads message content and needs no gateway intents (`DISCORD_INTENTS=0`),
-and **no public URL / HTTPS inbound endpoint is required**. Alternatively it can
-run in HTTP interactions-endpoint mode (`DISCORD_GATEWAY=false`), which does
-require a public HTTPS URL configured in the dev portal.
+It receives slash-command interactions over the **Discord gateway** via
+[discord.js](https://discord.js.org) (a `Client` with no intents): the app
+declares a bot user purely as a transport. Heartbeats, resume and sharding are
+handled by the library, it never reads message content, and **no public URL /
+HTTPS inbound endpoint is required**.
 
 Roles are assigned by Discord ID:
 
@@ -22,12 +20,11 @@ Roles are assigned by Discord ID:
 
 ## How it works
 
-- The app connects to the Discord **gateway** with the bot token and receives
-  `INTERACTION_CREATE` events (no intents needed, no public URL required). The
-  initial reply goes to `POST /interactions/{id}/{token}/callback`; results are
-  delivered via followup webhooks. In HTTP endpoint mode (`DISCORD_GATEWAY=false`)
-  the same pipeline is driven by signed `POST /interactions` requests instead
-  (Ed25519-verified with the app's public key).
+- The app connects to the Discord **gateway** with the bot token via discord.js and
+  handles `INTERACTION_CREATE` events (no intents needed, no public URL required).
+  Replies are sent with the interaction's built-in `reply`/`deferReply`/`editReply`/
+  `followUp` methods; file uploads from modals are downloaded from the attachment
+  URLs Discord provides.
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
   attachments; they are validated and stored under `DATA_DIR`.
 - `/generate` runs Archipelago's `Generate.py` with the game's player yamls and
@@ -56,17 +53,11 @@ Roles are assigned by Discord ID:
    - Add the app to your server with the `bot applications.commands` scopes (the bot
      user joins; the app only answers interactions and needs no channel permissions),
      and/or to your user with `applications.commands`.
-   - If you instead run HTTP endpoint mode (`DISCORD_GATEWAY=false`), set
-     *General Information → Interactions Endpoint URL* to a public HTTPS URL reaching
-     this service (tunnel such as cloudflared for local runs, or a domain + TLS
-     reverse proxy in prod) and provide `DISCORD_PUBLIC_KEY` for signature
-     verification. With the bot user present and no endpoint URL set, Discord
-     delivers interactions over the gateway instead. Note: if `DISCORD_GUILD_ID` is
-     set, interactions are only accepted from that guild — user-install DMs (which
-     have no guild) are then rejected too, so leave it unset if you want the app
-     usable in DMs.
+   - Note: if `DISCORD_GUILD_ID` is set, interactions are only accepted from that
+     guild — user-install DMs (which have no guild) are then rejected too, so leave
+     it unset if you want the app usable in DMs.
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
-   `DISCORD_PUBLIC_KEY`, `DISCORD_OWNER_ID` (your Discord user ID) and
+   `DISCORD_OWNER_ID` (your Discord user ID) and
    `AP_SERVER_HOST` (the public hostname players use to reach Archipelago servers).
 3. Run with Docker:
 
@@ -74,13 +65,13 @@ Roles are assigned by Discord ID:
    docker compose up -d --build
    ```
 
-   Ports: the compose file publishes `PORT` (3000, bridge `/health` — and the
-   interactions endpoint if you use `DISCORD_GATEWAY=false`) **and the
-   Archipelago game port range** `BASE_PORT`..`AP_PORT_RANGE_END`
-   (default 38281–38290), because each running game's Archipelago server listens
-   on the next free port from `BASE_PORT` and players must reach it. Adjust the
-   range in `docker-compose.yml` if you change `BASE_PORT`. In gateway mode no
-   inbound port needs to be public for Discord itself.
+   Ports: the compose file publishes `PORT` (3000, bridge `/health` only —
+   interactions from Discord arrive over the gateway websocket, so this port does
+   not need to be public) **and the Archipelago game port range**
+   `BASE_PORT`..`AP_PORT_RANGE_END` (default 38281–38290), because each running
+   game's Archipelago server listens on the next free port from `BASE_PORT` and
+   players must reach it. Adjust the range in `docker-compose.yml` if you change
+   `BASE_PORT`.
 
    The container **updates itself to the newest version on boot**: the entrypoint
    pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
@@ -134,22 +125,19 @@ self-update settings, and Archipelago source settings.
 
 ```sh
 npm install
-npm test          # unit + HTTP interaction tests (no Discord/AP needed)
+npm test          # unit + interaction dispatch tests (no Discord/AP needed)
 npm start         # requires the env vars; AP_DIR/AP_PYTHON point at an
                   # Archipelago checkout + venv for /generate, /start, /stats
 ```
 
-Layout: `src/index.js` (HTTP interactions server), `src/discord/` (signature
-verification, REST API, permissions, command handlers), `src/ap/manager.js`
+Layout: `src/index.js` (entrypoint: health server + discord.js client login and
+command registration), `src/discord/` (discord.js client + interaction dispatch,
+permissions, command handlers), `src/ap/manager.js`
 (Archipelago process management), `scripts/ap_probe.py` (spectator probe),
 `scripts/entrypoint.sh` + `Dockerfile` (self-updating container that also
 clones/updates Archipelago at boot), `docker/requirements-ap.txt` (Archipelago's
 Python dependencies).
 
-Only two npm dependencies: `tweetnacl` (the same Ed25519 verification the
-`discord-interactions` package wraps) and `yaml` (player yaml parsing). Everything
-else — HTTP server, REST calls, interaction dispatch — is Node's standard library,
-because an interactions-only app needs very little: verify one signature, parse
-JSON, answer callbacks/followups, register commands. Full bot libraries like
-discord.js are built around a gateway bot connection, which is exactly what this
-app avoids.
+Only two npm dependencies: `discord.js` (gateway connection, REST, interaction
+handling — heartbeats, resume and reconnects included) and `yaml` (player yaml
+parsing).

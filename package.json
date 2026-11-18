@@ -1,7 +1,7 @@
 {
   "name": "archipelago-discord-bridge",
   "version": "1.0.0",
-  "description": "Discord app (interactions endpoint, not a bot) that bridges Discord roles to Archipelago multiworld hosting.",
+  "description": "Discord app (discord.js gateway client) that bridges Discord roles to Archipelago multiworld hosting.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -13,7 +13,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "tweetnacl": "^1.0.3",
+    "discord.js": "^14.28.1",
     "yaml": "^2.6.1"
   }
 }
