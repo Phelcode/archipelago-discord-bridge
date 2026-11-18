@@ -45,6 +45,31 @@ test('other 404 errors are not retried', async () => {
   assert.equal(calls.length, 1);
 });
 
+test('429 rate limit is retried honoring retry_after', async () => {
+  const calls = stubFetch((n) =>
+    n === 1
+      ? { ok: false, status: 429, headers: new Map([['retry-after', '0.05']]), text: async () => JSON.stringify({ message: 'rate limited', retry_after: 0.05, global: false }) }
+      : jsonResponse(200, { id: 'm1' }));
+  const api = createDiscordApi({ token: 't', applicationId: 'app', apiBase: 'https://api.test' });
+  const result = await api.followup('tok', { content: 'hi' });
+  assert.deepEqual(result, { id: 'm1' });
+  assert.equal(calls.length, 2);
+});
+
+test('transient 5xx is retried then succeeds', async () => {
+  const calls = stubFetch((n) => (n === 1 ? jsonResponse(502, {}) : jsonResponse(200, { ok: true })));
+  const api = createDiscordApi({ token: 't', applicationId: 'app', apiBase: 'https://api.test' });
+  await api.registerCommands([]);
+  assert.equal(calls.length, 2);
+});
+
+test('persistent 429 fails after bounded retries', async () => {
+  const calls = stubFetch(() => ({ ok: false, status: 429, headers: new Map([['retry-after', '0.01']]), text: async () => JSON.stringify({ retry_after: 0.01 }) }));
+  const api = createDiscordApi({ token: 't', applicationId: 'app', apiBase: 'https://api.test' });
+  await assert.rejects(() => api.registerCommands([]), /429/);
+  assert.equal(calls.length, 5); // 1 initial + 4 retries
+});
+
 test('respondToInteraction posts to the callback endpoint with retries enabled', async () => {
   const calls = stubFetch((n) =>
     n === 1 ? jsonResponse(404, { message: 'Unknown Webhook', code: 10015 }) : jsonResponse(204, ''));
