@@ -98,7 +98,8 @@ Roles are assigned by Discord ID:
 
 - `/help` — commands available to your role
 - `/register` — register as a player (always opens a modal with a file-upload field for your player `.yaml` + optional slot-name field)
-- `/unregister`, `/whoami`, `/join game:`, `/leave game:`, `/players [game:]`
+- `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]`
+  - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
 - `/setup-game` — host: create a game session (always opens a modal: name + optional password; discards previous player registrations/yamls — everyone must `/register` again)
 - `/upload-apworld` — host: always opens a modal (game name + `.apworld` file-upload field)
 - `/generate` — host: always opens a modal (game name + optional seed, random if empty)
@@ -121,7 +122,15 @@ See [.env.example](.env.example) for all variables: Discord credentials, owner I
 optional guild restriction (`DISCORD_GUILD_ID`), ports, `HINTS_ENABLED`,
 self-update settings, and Archipelago source settings.
 
-## Development
+## Development / branch workflow
+
+- `main` is the stable, released state. All work-in-progress lands on the **`dev`
+  branch** (one branch, no per-fix branches).
+- To test a WIP build with the self-updating container, point it at `dev` in
+  `.env`: `REPO_BRANCH=dev` (the entrypoint pulls that branch on boot). Once
+  `dev` is verified, merge it to `main` and set `REPO_BRANCH=main` (default).
+
+## Development (local)
 
 ```sh
 npm install
