@@ -299,10 +299,32 @@ test('form commands take no inline options and always open a modal', () => {
   }
 });
 
-test('whoami replaces the built-in /me name', () => {
+test('profile replaces the built-in /me name', () => {
   const names = COMMAND_DEFINITIONS.map((d) => d.name);
-  assert.ok(names.includes('whoami'));
+  assert.ok(names.includes('profile'));
   assert.ok(!names.includes('me'));
+  assert.ok(!names.includes('whoami'));
+});
+
+test('profile shows role/registration and sets the private-responses preference', async () => {
+  const ctx = makeCtx({ userId: 'user-1' });
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  let out = await handleCommand('profile', ctx);
+  assert.match(out, /Role: \*\*player\*\*/);
+  assert.match(out, /Alice/);
+  assert.match(out, /public/);
+
+  ctx.options = { responses: 'private' };
+  out = await handleCommand('profile', ctx);
+  assert.match(out, /private \(only you can see them\)/);
+  assert.equal(ctx.db.getPreference('user-1').privateResponses, true);
+
+  ctx.options = { responses: 'public' };
+  await handleCommand('profile', ctx);
+  assert.equal(ctx.db.getPreference('user-1').privateResponses, false);
+
+  ctx.options = { responses: 'banana' };
+  await assert.rejects(() => handleCommand('profile', ctx), /private.*public/);
 });
 
 test('setup-game and generate read fields from modal submits', async () => {

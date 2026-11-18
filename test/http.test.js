@@ -129,7 +129,7 @@ test('/help defers then edits the original response', async () => {
 test('ephemeral command defers with the ephemeral flag', async () => {
   const { body } = await postInteraction({
     type: 2, token: 't5', guild_id: 'guild-1',
-    data: { name: 'whoami', options: [] },
+    data: { name: 'profile', options: [] },
     member: { user: { id: 'user-1', username: 'tester' } },
   });
   assert.equal(body.type, 5);
@@ -280,6 +280,24 @@ test('upload-apworld modal submit is host-only', async () => {
   assert.equal(sent.length, 1);
   assert.match(sent[0].payload.content, /w\.apworld/);
   app5.close();
+});
+
+test('private-responses preference makes public commands ephemeral for that user', async () => {
+  db.setPreference('user-1', 'privateResponses', true);
+  const { body } = await postInteraction({
+    type: 2, token: 't-priv', guild_id: 'guild-1',
+    data: { name: 'help', options: [] },
+    member: { user: { id: 'user-1', username: 'tester' } },
+  });
+  assert.equal(body.type, 5);
+  assert.equal(body.data.flags, 64, 'help reply is ephemeral when the user prefers private responses');
+  db.setPreference('user-1', 'privateResponses', false);
+  const { body: pub } = await postInteraction({
+    type: 2, token: 't-pub', guild_id: 'guild-1',
+    data: { name: 'help', options: [] },
+    member: { user: { id: 'user-1', username: 'tester' } },
+  });
+  assert.equal(pub.data.flags, undefined, 'help reply is public by default');
 });
 
 test('health endpoint', async () => {

@@ -76,6 +76,8 @@ export function createDispatcher({ config, db, api }) {
     }
     const userId = interaction.member?.user?.id || interaction.user?.id;
     const parsed = parseInteraction(interaction);
+    // "private responses" preference makes every reply ephemeral for that user
+    const wantsPrivate = Boolean(db.getPreference(userId).privateResponses);
 
     if (interaction.type === 3) {
       // MODAL_SUBMIT
@@ -90,7 +92,7 @@ export function createDispatcher({ config, db, api }) {
       if (perm === 'host' && !canHost(db, config, userId)) {
         return { type: 4, data: { flags: 64, content: '❌ Only hosts (or the owner) can use this form.' } };
       }
-      const ephemeral = customId === MODAL_REGISTER;
+      const ephemeral = wantsPrivate || customId === MODAL_REGISTER;
       processInteraction(interaction, { config, db, api }, (ctx) => handleModal(customId, ctx))
         .catch((err) => console.error('Modal processing failed:', err));
       return { type: 5, data: ephemeral ? { flags: 64 } : {} };
@@ -106,7 +108,7 @@ export function createDispatcher({ config, db, api }) {
     }
     // These commands always answer with a modal (file upload / form fields).
     if (ALWAYS_MODAL[name]) return ALWAYS_MODAL[name]();
-    const ephemeral = EPHEMERAL_COMMANDS.has(name);
+    const ephemeral = wantsPrivate || EPHEMERAL_COMMANDS.has(name);
     processInteraction(interaction, { config, db, api }, (ctx) => handleCommand(name, ctx))
       .catch((err) => console.error('Interaction processing failed:', err));
     return { type: 5, data: ephemeral ? { flags: 64 } : {} };

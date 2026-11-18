@@ -23,7 +23,22 @@ export const COMMAND_DEFINITIONS = [
     options: [],
   },
   { name: 'unregister', description: 'Remove your player registration' },
-  { name: 'whoami', description: 'Show your role and registration' },
+  {
+    name: 'profile',
+    description: 'Show your role/registration and choose who can see replies to your commands',
+    options: [
+      {
+        name: 'responses',
+        description: 'Who can see replies to your commands',
+        type: STRING,
+        required: false,
+        choices: [
+          { name: 'private — only I see the replies', value: 'private' },
+          { name: 'public — everyone sees the replies (default)', value: 'public' },
+        ],
+      },
+    ],
+  },
   { name: 'join', description: 'Join a game session with your registered player yaml', options: [gameOption(true)] },
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
@@ -106,7 +121,7 @@ export const PERMISSIONS = {
   help: 'all',
   register: 'all',
   unregister: 'all',
-  whoami: 'all',
+  profile: 'all',
   join: 'all',
   leave: 'all',
   players: 'all',
@@ -122,7 +137,7 @@ export const PERMISSIONS = {
   hints: 'all',
 };
 
-export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'whoami', 'hints', 'role']);
+export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 'hints', 'role']);
 
 // Modal fallback for file uploads: used when the slash command's attachment
 // option was left empty. File Upload is component type 19 inside a Label
@@ -367,7 +382,7 @@ function formatGameStats(config, db, game, probeResult) {
 const handlers = {
   async help(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
-    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /whoami, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
+    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
     if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
     if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate, /start, /stop — host commands');
     if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
@@ -396,10 +411,27 @@ const handlers = {
     return 'Your player registration was removed.';
   },
 
-  async whoami(ctx) {
+  async profile(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
     const player = ctx.db.getPlayer(ctx.userId);
-    return [`**Role:** ${role}`, player ? `**Registered as:** ${player.slot} (game: ${player.game})` : '**Not registered as a player** (use /register)'].join('\n');
+    const responses = ctx.options.responses;
+    let confirmation = null;
+    if (responses !== undefined) {
+      if (!['private', 'public'].includes(responses)) throw new UserError('responses must be "private" or "public".');
+      ctx.db.setPreference(ctx.userId, 'privateResponses', responses === 'private');
+      confirmation = `✅ Replies to your commands are now **${responses === 'private' ? 'private (only you can see them)' : 'public (everyone can see them)'}**.`;
+    }
+    const current = ctx.db.getPreference(ctx.userId).privateResponses
+      ? 'private (only you can see them)'
+      : 'public (everyone can see them) — default';
+    return [
+      '**Your profile**',
+      `Role: **${role}**`,
+      player ? `Registered as player: **${player.slot}** (${player.game})` : 'Not registered as a player — use /register',
+      `Replies to your commands: **${current}**`,
+      'Change it with `/profile responses: private` or `/profile responses: public`.',
+      confirmation,
+    ].filter(Boolean).join('\n');
   },
 
   async join(ctx) {
