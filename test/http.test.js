@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import nacl from 'tweetnacl';
-import { createApp, chunkContent } from '../src/index.js';
+import { createApp, createDispatcher, chunkContent } from '../src/index.js';
 import { Store } from '../src/store.js';
 
 const keypair = nacl.sign.keyPair();
@@ -52,7 +52,8 @@ async function postInteraction(body) {
 before(async () => {
   const config = makeConfig();
   db = new Store(path.join(config.dataDir, 'db.json'));
-  const app = createApp({ config, db, api: fakeApi });
+  const dispatch = createDispatcher({ config, db, api: fakeApi });
+  const app = createApp({ config, db, api: fakeApi, dispatch });
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);
   });
@@ -99,13 +100,15 @@ test('owner-only command is denied for hosts', async () => {
   assert.match(body.data.content, /owner/);
 });
 
-test('wrong guild is rejected', async () => {
-  const { status } = await postInteraction({
+test('wrong guild is rejected with an ephemeral reply', async () => {
+  const { status, body } = await postInteraction({
     type: 2, token: 't3', guild_id: 'other-guild',
     data: { name: 'help', options: [] },
     member: { user: { id: 'user-1', username: 'tester' } },
   });
-  assert.equal(status, 403);
+  assert.equal(status, 200);
+  assert.equal(body.type, 4);
+  assert.equal(body.data.flags, 64);
 });
 
 test('/help defers then edits the original response', async () => {
@@ -137,7 +140,7 @@ test('user-install DM interaction (no guild, no member) is handled', async () =>
   const config2 = makeConfig();
   config2.discordGuildId = null;
   const db2 = new Store(path.join(config2.dataDir, 'db.json'));
-  const app2 = createApp({ config: config2, db: db2, api: fakeApi });
+  const app2 = createApp({ config: config2, db: db2, api: fakeApi, dispatch: createDispatcher({ config: config2, db: db2, api: fakeApi }) });
   await new Promise((resolve) => {
     const s = app2.listen(0, '127.0.0.1', resolve);
     app2.on('listening', () => {});

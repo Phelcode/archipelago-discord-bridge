@@ -4,9 +4,10 @@ services:
     container_name: archipelago-discord-bridge
     env_file: .env
     ports:
-      # The interactions endpoint must be reachable by Discord at a public
-      # HTTPS URL (see README). This port only needs to be exposed locally if
-      # you terminate TLS with a tunnel on the host.
+      # Only needed for the /health endpoint (and for HTTP interactions-endpoint
+      # mode if you use DISCORD_GATEWAY=false, in which case it must be reachable
+      # by Discord at a public HTTPS URL — see README). In gateway mode
+      # (default) no inbound port is required at all.
       - "${PORT:-3000}:${PORT:-3000}"
     volumes:
       - ./data:/data

@@ -1,8 +1,15 @@
 # archipelago-discord-bridge
 
-A Node.js **Discord app** (interactions endpoint — *not* a bot: it never connects to the
-Discord gateway and never reads messages) that bridges Discord roles to
+A Node.js Discord app that bridges Discord roles to
 [Archipelago](https://archipelago.gg) multiworld hosting.
+
+It receives slash-command interactions over the **Discord gateway** (default,
+`DISCORD_GATEWAY=true`): the app declares a bot user purely as a transport — it
+identifies with the bot token, heartbeats, and handles `INTERACTION_CREATE`. It
+never reads message content and needs no gateway intents (`DISCORD_INTENTS=0`),
+and **no public URL / HTTPS inbound endpoint is required**. Alternatively it can
+run in HTTP interactions-endpoint mode (`DISCORD_GATEWAY=false`), which does
+require a public HTTPS URL configured in the dev portal.
 
 Roles are assigned by Discord ID:
 
@@ -15,10 +22,12 @@ Roles are assigned by Discord ID:
 
 ## How it works
 
-- Discord sends slash-command interactions to `POST /interactions` on this app.
-  Requests are verified with the app's Ed25519 public key; the app replies via the
-  interaction callback and followup webhooks (no bot token needed for replies; the
-  token is only used to register the slash commands at boot).
+- The app connects to the Discord **gateway** with the bot token and receives
+  `INTERACTION_CREATE` events (no intents needed, no public URL required). The
+  initial reply goes to `POST /interactions/{id}/{token}/callback`; results are
+  delivered via followup webhooks. In HTTP endpoint mode (`DISCORD_GATEWAY=false`)
+  the same pipeline is driven by signed `POST /interactions` requests instead
+  (Ed25519-verified with the app's public key).
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
   attachments; they are validated and stored under `DATA_DIR`.
 - `/generate` runs Archipelago's `Generate.py` with the game's player yamls and
@@ -31,9 +40,10 @@ Roles are assigned by Discord ID:
 ## Setup
 
 1. Create an application at <https://discord.com/developers/applications>.
-   - Copy the **Application ID**, **Public Key**, and a **Bot token** (the token is
-     only used for REST calls like registering commands — no bot/gateway scopes are
-     needed; the app never connects to the gateway).
+   - Copy the **Application ID** and **Bot token**.
+   - On the *Bot* page, click **Add Bot** to declare a bot user (this is what enables
+     the gateway transport, so no public HTTPS interactions endpoint is needed).
+     Copy the token; no privileged intents are required.
    - Under *Installation*, enable **both** *Guild Install* and *User Install*
      (`integration_types: [0, 1]`), so the app can be added to servers **and** to
      individual users. The app also tries to set this itself via
@@ -43,23 +53,18 @@ Roles are assigned by Discord ID:
      contexts (guild channels, the app DM, and other DMs/group DMs for user
      installs) — globally, and additionally as guild commands in `DISCORD_GUILD_ID`
      (if set) so changes show up instantly in your server.
-   - Under *General Information → Interactions Endpoint URL*, set an HTTPS URL that
-     reaches this service, e.g. `https://bridge.example.com/interactions`.
-     **Note:** an app and a bot are the same application object, the only difference
-     being whether a bot user is declared — and declaring no bot user is exactly what
-     makes the HTTP endpoint the *only* way to receive interactions (gateway
-     `INTERACTION_CREATE` needs a connected bot client). But the endpoint is a URL
-     that Discord's servers POST to, so per Discord's own docs "Discord needs a
-     public URL to send them": the portal requires HTTPS, PINGs the URL on save and
-     rejects localhost/plain HTTP. So it must be internet-reachable — a tunnel
-     (cloudflared/ngrok) for local runs, or a domain + TLS reverse proxy in front of
-     the container for production. The only no-public-URL alternative is Discord
-     *Activities* (embedded in-client apps proxied by the Discord client itself) —
-     a different architecture, not slash commands served by your server.
-   - Add the app to your server (and/or to your user) with the `applications.commands`
-     scope. Note: if `DISCORD_GUILD_ID` is set, interactions are only accepted from
-     that guild — user-install DMs (which have no guild) are then rejected too, so
-     leave it unset if you want the app usable in DMs.
+   - Add the app to your server with the `bot applications.commands` scopes (the bot
+     user joins; the app only answers interactions and needs no channel permissions),
+     and/or to your user with `applications.commands`.
+   - If you instead run HTTP endpoint mode (`DISCORD_GATEWAY=false`), set
+     *General Information → Interactions Endpoint URL* to a public HTTPS URL reaching
+     this service (tunnel such as cloudflared for local runs, or a domain + TLS
+     reverse proxy in prod) and provide `DISCORD_PUBLIC_KEY` for signature
+     verification. With the bot user present and no endpoint URL set, Discord
+     delivers interactions over the gateway instead. Note: if `DISCORD_GUILD_ID` is
+     set, interactions are only accepted from that guild — user-install DMs (which
+     have no guild) are then rejected too, so leave it unset if you want the app
+     usable in DMs.
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
    `DISCORD_PUBLIC_KEY`, `DISCORD_OWNER_ID` (your Discord user ID) and
    `AP_SERVER_HOST` (the public hostname players use to reach Archipelago servers).

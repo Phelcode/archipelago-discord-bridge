@@ -26,6 +26,9 @@ export function createDiscordApi({ token, applicationId, apiBase }) {
     registerGuildCommands(guildId, definitions) {
       return call('PUT', `/applications/${applicationId}/guilds/${guildId}/commands`, definitions);
     },
+    respondToInteraction(interactionId, interactionToken, responseBody) {
+      return call('POST', `/interactions/${interactionId}/${interactionToken}/callback`, responseBody);
+    },
     editOriginal(interactionToken, payload) {
       return call('PATCH', `/webhooks/${applicationId}/${interactionToken}/messages/@original`, payload);
     },
