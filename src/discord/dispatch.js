@@ -1,3 +1,4 @@
+import { MessageFlags } from 'discord.js';
 import { canHost, isOwner } from './permissions.js';
 import {
   PERMISSIONS, EPHEMERAL_COMMANDS, ALWAYS_MODAL, MODAL_PERMISSIONS, MODAL_REGISTER,
@@ -9,6 +10,9 @@ export async function downloadAttachment(url) {
   if (!res.ok) throw new Error(`Failed to download attachment: ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
+
+// discord.js v14: use flags instead of the deprecated `ephemeral` option.
+const ephemeralOpts = (ephemeral) => (ephemeral ? { flags: MessageFlags.Ephemeral } : {});
 
 export function chunkContent(text, max = 1900) {
   if (text.length <= max) return [text];
@@ -77,8 +81,9 @@ async function finishWithResult(interaction, ctx, produce) {
     const content = String(await produce(ctx));
     const chunks = chunkContent(content);
     await interaction.editReply(chunks[0]);
+    const followOpts = ephemeralOpts(Boolean(interaction.flags?.has(MessageFlags.Ephemeral)));
     for (const chunk of chunks.slice(1)) {
-      await interaction.followUp({ content: chunk, ephemeral: interaction.ephemeral ?? false });
+      await interaction.followUp({ content: chunk, ...followOpts });
     }
   } catch (err) {
     if (err instanceof UserError) {
@@ -97,7 +102,7 @@ export function createDispatcher({ config, db, download = downloadAttachment }) 
     // accepted; user-installed (DM / private channel) interactions have no
     // guild and are rejected in that case.
     if (config.discordGuildId && interaction.guildId !== config.discordGuildId) {
-      await interaction.reply({ ephemeral: true, content: '❌ This app is restricted to a specific server.' });
+      await interaction.reply({ content: '❌ This app is restricted to a specific server.', ...ephemeralOpts(true) });
       return;
     }
     // "private responses" preference makes every reply ephemeral for that user
@@ -107,19 +112,19 @@ export function createDispatcher({ config, db, download = downloadAttachment }) 
       const customId = interaction.customId;
       const perm = MODAL_PERMISSIONS[customId];
       if (!perm) {
-        await interaction.reply({ ephemeral: true, content: '❌ Unknown form.' });
+        await interaction.reply({ content: '❌ Unknown form.', ...ephemeralOpts(true) });
         return;
       }
       if (perm === 'owner' && !isOwner(config, userId)) {
-        await interaction.reply({ ephemeral: true, content: '❌ Only the owner can use this form.' });
+        await interaction.reply({ content: '❌ Only the owner can use this form.', ...ephemeralOpts(true) });
         return;
       }
       if (perm === 'host' && !canHost(db, config, userId)) {
-        await interaction.reply({ ephemeral: true, content: '❌ Only hosts (or the owner) can use this form.' });
+        await interaction.reply({ content: '❌ Only hosts (or the owner) can use this form.', ...ephemeralOpts(true) });
         return;
       }
       const ephemeral = wantsPrivate || customId === MODAL_REGISTER;
-      await interaction.deferReply({ ephemeral });
+      await interaction.deferReply(ephemeralOpts(ephemeral));
       const ctx = interactionToCtx(interaction, { config, db, download });
       await finishWithResult(interaction, ctx, (c) => handleModal(customId, c));
       return;
@@ -129,11 +134,11 @@ export function createDispatcher({ config, db, download = downloadAttachment }) 
     const name = interaction.commandName;
     const perm = PERMISSIONS[name] || 'all';
     if (perm === 'owner' && !isOwner(config, userId)) {
-      await interaction.reply({ ephemeral: true, content: '❌ Only the owner can use this command.' });
+      await interaction.reply({ content: '❌ Only the owner can use this command.', ...ephemeralOpts(true) });
       return;
     }
     if (perm === 'host' && !canHost(db, config, userId)) {
-      await interaction.reply({ ephemeral: true, content: '❌ Only hosts (or the owner) can use this command.' });
+      await interaction.reply({ content: '❌ Only hosts (or the owner) can use this command.', ...ephemeralOpts(true) });
       return;
     }
     // These commands always answer with a modal (file upload / form fields).
@@ -142,7 +147,7 @@ export function createDispatcher({ config, db, download = downloadAttachment }) 
       return;
     }
     const ephemeral = wantsPrivate || EPHEMERAL_COMMANDS.has(name);
-    await interaction.deferReply({ ephemeral });
+    await interaction.deferReply(ephemeralOpts(ephemeral));
     const ctx = interactionToCtx(interaction, { config, db, download });
     await finishWithResult(interaction, ctx, (c) => handleCommand(name, c));
   };

@@ -27,7 +27,10 @@ Roles are assigned by Discord ID:
   URLs Discord provides.
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
   attachments; they are validated and stored under `DATA_DIR`. `.apworld` files are
-  **global** — uploaded once, they are installed into every game at generation time.
+  **global** — uploaded once, they are installed at generation/server start into
+  `<AP_DIR>/custom_worlds` (where Archipelago looks when its install dir is
+  writable, as in this container) and into the per-game XDG `Archipelago/worlds`
+  fallback, so every game can use them.
 - `/start` runs Archipelago's `Generate.py` first if the game hasn't been
   generated yet (seed from the `/setup-game` form, random if empty), producing a
   `.archipelago` multidata archive, then launches `MultiServer.py` for it;

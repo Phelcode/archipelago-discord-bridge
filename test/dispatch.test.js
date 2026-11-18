@@ -30,14 +30,15 @@ function setup(overrides = {}, download) {
 
 function baseInteraction(kind, extra = {}) {
   const calls = { reply: [], deferReply: [], editReply: [], followUp: [], showModal: [] };
+  const flagSet = new Set();
   const interaction = {
     user: { id: 'user-1', username: 'tester' },
     guildId: 'guild-1',
-    ephemeral: false,
+    flags: { has: (f) => flagSet.has(Number(f)) },
     isChatInputCommand() { return kind === 'chat'; },
     isModalSubmit() { return kind === 'modal'; },
-    reply: async (p) => { calls.reply.push(p); },
-    deferReply: async (p) => { calls.deferReply.push(p); interaction.ephemeral = Boolean(p?.ephemeral); },
+    reply: async (p) => { calls.reply.push(p); if (p?.flags !== undefined) flagSet.add(Number(p.flags)); },
+    deferReply: async (p) => { calls.deferReply.push(p); if (p?.flags !== undefined) flagSet.add(Number(p.flags)); },
     editReply: async (c) => { calls.editReply.push(c); },
     followUp: async (p) => { calls.followUp.push(p); },
     showModal: async (m) => { calls.showModal.push(m); },
@@ -87,7 +88,7 @@ test('interactions from a foreign guild are rejected when DISCORD_GUILD_ID is se
   const { interaction, calls } = chat('help', { guildId: 'other-guild' });
   await dispatch(interaction);
   assert.equal(calls.reply.length, 1);
-  assert.equal(calls.reply[0].ephemeral, true);
+  assert.equal(calls.reply[0].flags, 64); // MessageFlags.Ephemeral
   assert.match(calls.reply[0].content, /restricted to a specific server/);
   assert.equal(calls.deferReply.length, 0);
 });
@@ -133,7 +134,7 @@ test('regular commands defer then edit the reply with the result', async () => {
   const { dispatch } = setup();
   const { interaction, calls } = chat('help');
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: false }]);
+  assert.deepEqual(calls.deferReply, [{}]);
   assert.equal(calls.editReply.length, 1);
   assert.match(calls.editReply[0], /\/help/);
 });
@@ -143,7 +144,7 @@ test('private-responses preference makes every reply ephemeral', async () => {
   db.setPreference('user-1', 'privateResponses', true);
   const { interaction, calls } = chat('help');
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: true }]);
+  assert.deepEqual(calls.deferReply, [{ flags: 64 }]);
 });
 
 test('role subcommand is ephemeral and parses user options', async () => {
@@ -154,7 +155,7 @@ test('role subcommand is ephemeral and parses user options', async () => {
     users: { user: { id: 'u-9' } },
   });
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: true }]);
+  assert.deepEqual(calls.deferReply, [{ flags: 64 }]);
   assert.match(calls.editReply[0], /Assigned role \*\*host\*\* to <@u-9>/);
   assert.equal(db.isHost('u-9'), true);
 });
@@ -168,7 +169,7 @@ test('register modal submit downloads the uploaded yaml and registers the player
     textValues: { name: '' },
   });
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: true }]); // register is always ephemeral
+  assert.deepEqual(calls.deferReply, [{ flags: 64 }]); // register is always ephemeral
   assert.match(calls.editReply[0], /Registered as player \*\*Dave\*\*/);
   assert.equal(db.getPlayer('user-1').slot, 'Dave');
 });
@@ -182,7 +183,7 @@ test('setup-game modal submit creates the game for a host', async () => {
     textValues: { name: 'My Game', password: 'pw' },
   });
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: false }]);
+  assert.deepEqual(calls.deferReply, [{}]);
   assert.match(calls.editReply[0], /Created game \*\*my-game\*\*/);
   assert.equal(db.getGame('my-game').password, 'pw');
 });
@@ -206,7 +207,7 @@ test('upload-apworld modal submit stores the file globally (no game field)', asy
     uploadedFiles: { file: new Map([['a1', { id: 'a1', name: 'cool.apworld', size: zipBuf.length, url: 'https://cdn/cool.apworld' }]]) },
   });
   await dispatch(interaction);
-  assert.deepEqual(calls.deferReply, [{ ephemeral: false }]);
+  assert.deepEqual(calls.deferReply, [{}]);
   assert.match(calls.editReply[0], /Uploaded \*\*cool\.apworld\*\*/);
   assert.match(calls.editReply[0], /every game/);
   assert.ok(fs.existsSync(path.join(config.dataDir, 'apworlds', 'cool.apworld')));
@@ -252,4 +253,15 @@ test('long replies are chunked: one editReply plus followUps', async () => {
   assert.equal(calls.editReply.length, 1);
   assert.ok(calls.followUp.length >= 1);
   for (const p of calls.followUp) assert.ok(p.content.length <= 1900);
+});
+
+test('followUps inherit the ephemeral flag of the deferred reply', async () => {
+  const { db, dispatch } = setup();
+  db.setPreference('user-1', 'privateResponses', true);
+  for (let i = 0; i < 60; i += 1) db.setPlayer(`u${i}`, { slot: `SlotNumber${i}`, game: 'ChecksFinder' });
+  const { interaction, calls } = chat('players');
+  await dispatch(interaction);
+  assert.deepEqual(calls.deferReply, [{ flags: 64 }]);
+  assert.ok(calls.followUp.length >= 1);
+  for (const p of calls.followUp) assert.equal(p.flags, 64);
 });
