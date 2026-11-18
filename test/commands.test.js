@@ -281,6 +281,24 @@ test('command payloads support guild and user install in all contexts', () => {
   }
 });
 
+test('file-upload commands declare attachment (type 10) options', () => {
+  const byName = Object.fromEntries(COMMAND_DEFINITIONS.map((d) => [d.name, d]));
+  const registerYaml = byName.register.options.find((o) => o.name === 'yaml');
+  const uploadFile = byName['upload-apworld'].options.find((o) => o.name === 'file');
+  assert.equal(registerYaml.type, 10);
+  assert.equal(registerYaml.required, true);
+  assert.equal(uploadFile.type, 10);
+  assert.equal(uploadFile.required, true);
+  // required options must precede optional ones (Discord validation rule)
+  for (const def of COMMAND_DEFINITIONS) {
+    const opts = def.options || [];
+    const firstOptional = opts.findIndex((o) => !o.required);
+    if (firstOptional !== -1) {
+      assert.ok(opts.slice(firstOptional).every((o) => !o.required), `${def.name}: required option after optional`);
+    }
+  }
+});
+
 test('registerAllCommands updates the app and registers global (+guild) commands', async () => {
   const calls = [];
   const api = {

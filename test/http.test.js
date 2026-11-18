@@ -169,6 +169,53 @@ test('user-install DM interaction (no guild, no member) is handled', async () =>
   app2.close();
 });
 
+test('/register with an attachment option resolves and downloads the file', async () => {
+  const yaml = 'name: Carol\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const apiWithDownload = {
+    ...fakeApi,
+    downloads: [],
+    async downloadAttachment(url) {
+      this.downloads.push(url);
+      return Buffer.from(yaml);
+    },
+  };
+  const config3 = makeConfig();
+  const db3 = new Store(path.join(config3.dataDir, 'db.json'));
+  const dispatch3 = createDispatcher({ config: config3, db: db3, api: apiWithDownload });
+  const app3 = createApp({ config: config3, db: db3, api: apiWithDownload, dispatch: dispatch3 });
+  await new Promise((resolve) => app3.listen(0, '127.0.0.1', resolve));
+  const port = app3.address().port;
+  sent = [];
+  const raw = JSON.stringify({
+    type: 2, token: 't-att', guild_id: 'guild-1',
+    data: {
+      name: 'register',
+      options: [{ name: 'yaml', type: 10, value: 'att-123' }],
+      resolved: {
+        attachments: {
+          'att-123': { id: 'att-123', filename: 'carol.yaml', size: yaml.length, url: 'https://cdn.discordapp.com/attachments/1/2/carol.yaml', content_type: 'application/x-yaml' },
+        },
+      },
+    },
+    member: { user: { id: 'user-1', username: 'tester' } },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = Buffer.from(nacl.sign.detached(Buffer.from(timestamp + raw), keypair.secretKey)).toString('hex');
+  const res = await fetch(`http://127.0.0.1:${port}/interactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': signature, 'X-Signature-Timestamp': timestamp },
+    body: raw,
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).type, 5); // deferred (register is ephemeral)
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].payload.content, /Registered as player \*\*Carol\*\*/);
+  assert.deepEqual(apiWithDownload.downloads, ['https://cdn.discordapp.com/attachments/1/2/carol.yaml']);
+  assert.equal(db3.getPlayer('user-1').slot, 'Carol');
+  app3.close();
+});
+
 test('health endpoint', async () => {
   const res = await fetch(`${baseUrl}/health`);
   assert.equal(res.status, 200);
