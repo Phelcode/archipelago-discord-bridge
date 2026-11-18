@@ -367,7 +367,7 @@ function formatGameStats(config, db, game, probeResult) {
 const handlers = {
   async help(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
-    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml (anyone)', '• /unregister, /me, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
+    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /whoami, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
     if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
     if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate, /start, /stop — host commands');
     if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
