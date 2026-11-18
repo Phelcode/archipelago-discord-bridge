@@ -13,9 +13,9 @@ RUN npm install --omit=dev
 
 COPY . .
 
-# Vendored Archipelago (see vendor/README.md) and its Python environment,
-# baked into the image so nothing is downloaded from GitHub at runtime.
-COPY vendor/Archipelago /opt/Archipelago
+# Python environment for Archipelago, baked in at build time. Archipelago's
+# source itself is cloned/updated into /opt/Archipelago by the entrypoint on
+# every boot (see scripts/entrypoint.sh).
 RUN python3 -m venv /opt/ap-venv \
  && /opt/ap-venv/bin/pip install --quiet --upgrade pip \
  && /opt/ap-venv/bin/pip install --quiet --no-cache-dir -r /opt/app/docker/requirements-ap.txt

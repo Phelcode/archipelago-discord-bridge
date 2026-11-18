@@ -57,11 +57,12 @@ Roles are assigned by Discord ID:
    to disable, or override `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in
    `./data` (a volume), so updates never wipe games, uploads or role assignments.
 
-   **Archipelago itself is included**: `vendor/Archipelago/` is a vendored snapshot
-   of Archipelago (see `vendor/README.md` for the exact commit) that the Docker image
-   bakes in at `/opt/Archipelago` together with its Python venv — nothing is cloned
-   from GitHub at boot. Set `AP_UPDATE=true` only if you additionally want the
-   container to pull the latest Archipelago on boot.
+   **Archipelago itself is not in this repo.** On boot the entrypoint clones
+   [Archipelago](https://github.com/ArchipelagoMW/Archipelago) into
+   `/opt/Archipelago` on first run and updates it to the newest version on every
+   boot (`AP_UPDATE=false` keeps the existing copy; `AP_REPO_URL`/`AP_BRANCH`
+   override the source). The image bakes in only Archipelago's *Python
+   dependencies* (`docker/requirements-ap.txt`) in a venv at `/opt/ap-venv`.
 
 ## Commands
 
@@ -102,8 +103,9 @@ npm start         # requires the env vars; AP_DIR/AP_PYTHON point at an
 Layout: `src/index.js` (HTTP interactions server), `src/discord/` (signature
 verification, REST API, permissions, command handlers), `src/ap/manager.js`
 (Archipelago process management), `scripts/ap_probe.py` (spectator probe),
-`scripts/entrypoint.sh` + `Dockerfile` (self-updating container),
-`vendor/Archipelago/` (bundled Archipelago snapshot).
+`scripts/entrypoint.sh` + `Dockerfile` (self-updating container that also
+clones/updates Archipelago at boot), `docker/requirements-ap.txt` (Archipelago's
+Python dependencies).
 
 Only two npm dependencies: `tweetnacl` (the same Ed25519 verification the
 `discord-interactions` package wraps) and `yaml` (player yaml parsing). Everything
