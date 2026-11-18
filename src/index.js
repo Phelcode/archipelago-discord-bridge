@@ -5,7 +5,7 @@ import { Store } from './store.js';
 import { verifySignature, isFreshTimestamp } from './discord/verify.js';
 import { createDiscordApi } from './discord/api.js';
 import { startGateway } from './discord/gateway.js';
-import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, parseInteraction, handleCommand, registerAllCommands, UserError } from './discord/commands.js';
+import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, MODAL_PERMISSIONS, MODAL_REGISTER, parseInteraction, handleCommand, handleModal, registerAllCommands, registerModalResponse, uploadApworldModalResponse, UserError } from './discord/commands.js';
 import { canHost, isOwner } from './discord/permissions.js';
 
 function readBody(req) {
@@ -37,14 +37,14 @@ export function chunkContent(text, max = 1900) {
   return chunks;
 }
 
-export async function processInteraction(interaction, { config, db, api }) {
+export async function processInteraction(interaction, { config, db, api }, produce) {
   const token = interaction.token;
   const userId = interaction.member?.user?.id || interaction.user?.id;
   const userName = interaction.member?.user?.username || interaction.user?.username || userId;
-  const { options, attachments, subcommand, subOptions } = parseInteraction(interaction);
-  const ctx = { config, db, api, userId, userName, options, attachments, subcommand, subOptions };
+  const parsed = parseInteraction(interaction);
+  const ctx = { config, db, api, userId, userName, ...parsed };
   try {
-    const content = await handleCommand(interaction.data.name, ctx);
+    const content = await produce(ctx);
     const chunks = chunkContent(String(content));
     await api.editOriginal(token, { content: chunks[0] });
     for (const chunk of chunks.slice(1)) {
@@ -67,24 +67,49 @@ export async function processInteraction(interaction, { config, db, api }) {
 export function createDispatcher({ config, db, api }) {
   return async function dispatch(interaction) {
     if (interaction.type === 1) return { type: 1 };
-    if (interaction.type !== 2) return null;
+    if (interaction.type !== 2 && interaction.type !== 3) return null;
     // When DISCORD_GUILD_ID is set, only interactions from that guild are
     // accepted; user-installed (DM / private channel) interactions have no
     // guild_id and are rejected in that case.
     if (config.discordGuildId && interaction.guild_id !== config.discordGuildId) {
       return { type: 4, data: { flags: 64, content: '❌ This app is restricted to a specific server.' } };
     }
+    const userId = interaction.member?.user?.id || interaction.user?.id;
+    const parsed = parseInteraction(interaction);
+
+    if (interaction.type === 3) {
+      // MODAL_SUBMIT
+      const customId = parsed.modalCustomId;
+      if (!MODAL_PERMISSIONS[customId]) {
+        return { type: 4, data: { flags: 64, content: '❌ Unknown form.' } };
+      }
+      const perm = MODAL_PERMISSIONS[customId];
+      if (perm === 'owner' && !isOwner(config, userId)) {
+        return { type: 4, data: { flags: 64, content: '❌ Only the owner can use this form.' } };
+      }
+      if (perm === 'host' && !canHost(db, config, userId)) {
+        return { type: 4, data: { flags: 64, content: '❌ Only hosts (or the owner) can use this form.' } };
+      }
+      const ephemeral = customId === MODAL_REGISTER;
+      processInteraction(interaction, { config, db, api }, (ctx) => handleModal(customId, ctx))
+        .catch((err) => console.error('Modal processing failed:', err));
+      return { type: 5, data: ephemeral ? { flags: 64 } : {} };
+    }
+
     const name = interaction.data?.name;
     const perm = PERMISSIONS[name] || 'all';
-    const userId = interaction.member?.user?.id || interaction.user?.id;
     if (perm === 'owner' && !isOwner(config, userId)) {
       return { type: 4, data: { flags: 64, content: '❌ Only the owner can use this command.' } };
     }
     if (perm === 'host' && !canHost(db, config, userId)) {
       return { type: 4, data: { flags: 64, content: '❌ Only hosts (or the owner) can use this command.' } };
     }
+    // If the file wasn't attached to the command, answer with a modal that has
+    // a file-upload component instead.
+    if (name === 'register' && !parsed.attachments.yaml) return registerModalResponse();
+    if (name === 'upload-apworld' && !parsed.attachments.file) return uploadApworldModalResponse();
     const ephemeral = EPHEMERAL_COMMANDS.has(name);
-    processInteraction(interaction, { config, db, api })
+    processInteraction(interaction, { config, db, api }, (ctx) => handleCommand(name, ctx))
       .catch((err) => console.error('Interaction processing failed:', err));
     return { type: 5, data: ephemeral ? { flags: 64 } : {} };
   };

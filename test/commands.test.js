@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
-import { handleCommand, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, COMMAND_DEFINITIONS } from '../src/discord/commands.js';
+import { handleCommand, handleModal, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, registerModalResponse, uploadApworldModalResponse, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -286,9 +286,9 @@ test('file-upload commands declare attachment (type 10) options', () => {
   const registerYaml = byName.register.options.find((o) => o.name === 'yaml');
   const uploadFile = byName['upload-apworld'].options.find((o) => o.name === 'file');
   assert.equal(registerYaml.type, 10);
-  assert.equal(registerYaml.required, true);
+  assert.equal(registerYaml.required, false); // optional: empty -> modal upload dialog
   assert.equal(uploadFile.type, 10);
-  assert.equal(uploadFile.required, true);
+  assert.equal(uploadFile.required, false);
   // required options must precede optional ones (Discord validation rule)
   for (const def of COMMAND_DEFINITIONS) {
     const opts = def.options || [];
@@ -297,6 +297,39 @@ test('file-upload commands declare attachment (type 10) options', () => {
       assert.ok(opts.slice(firstOptional).every((o) => !o.required), `${def.name}: required option after optional`);
     }
   }
+});
+
+test('parseInteraction parses modal submits (Label + FileUpload components)', () => {
+  const interaction = {
+    type: 3,
+    token: 'tok',
+    data: {
+      custom_id: 'bridge_register',
+      components: [
+        { type: 18, label: 'Player yaml file', component: { type: 19, custom_id: 'yaml', values: ['a1'] } },
+        { type: 18, label: 'Name', component: { type: 4, custom_id: 'name', value: 'Dave' } },
+      ],
+      resolved: { attachments: { a1: { id: 'a1', filename: 'dave.yaml', url: 'https://cdn/x', size: 10 } } },
+    },
+    member: { user: { id: 'user-1' } },
+  };
+  const parsed = parseInteraction(interaction);
+  assert.equal(parsed.modalCustomId, 'bridge_register');
+  assert.equal(parsed.modal.files.yaml[0].filename, 'dave.yaml');
+  assert.equal(parsed.modal.fields.name, 'Dave');
+});
+
+test('modal responses contain a file-upload component (type 19 in a Label)', () => {
+  const reg = registerModalResponse();
+  assert.equal(reg.type, 9);
+  assert.equal(reg.data.custom_id, 'bridge_register');
+  const fileComp = reg.data.components.find((c) => c.component.type === 19);
+  assert.ok(fileComp, 'has file upload component');
+  assert.equal(fileComp.component.custom_id, 'yaml');
+  const up = uploadApworldModalResponse();
+  assert.equal(up.type, 9);
+  assert.ok(up.data.components.some((c) => c.component.type === 19 && c.component.custom_id === 'file'));
+  assert.ok(up.data.components.some((c) => c.component.type === 4 && c.component.custom_id === 'game'));
 });
 
 test('registerAllCommands updates the app and registers global (+guild) commands', async () => {

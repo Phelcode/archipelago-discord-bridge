@@ -21,7 +21,7 @@ export const COMMAND_DEFINITIONS = [
     name: 'register',
     description: 'Register as a player by uploading your Archipelago player yaml',
     options: [
-      { name: 'yaml', description: 'Your player .yaml file', type: ATTACHMENT, required: true },
+      { name: 'yaml', description: 'Your player .yaml file (or leave empty to get an upload dialog)', type: ATTACHMENT, required: false },
       { name: 'name', description: 'Slot name override (default: name inside the yaml)', type: STRING, required: false },
     ],
   },
@@ -43,7 +43,7 @@ export const COMMAND_DEFINITIONS = [
     description: '[host] Upload a custom .apworld file to a game',
     options: [
       gameOption(true),
-      { name: 'file', description: 'The .apworld file', type: ATTACHMENT, required: true },
+      { name: 'file', description: 'The .apworld file (or leave empty to get an upload dialog)', type: ATTACHMENT, required: false },
     ],
   },
   {
@@ -133,8 +133,68 @@ export const PERMISSIONS = {
 
 export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'me', 'hints', 'role']);
 
+// Modal fallback for file uploads: used when the slash command's attachment
+// option was left empty. File Upload is component type 19 inside a Label
+// (type 18); on submit, MODAL_SUBMIT (type 5) carries the file's attachment
+// IDs in component.values, resolved via data.resolved.attachments.
+export const MODAL_REGISTER = 'bridge_register';
+export const MODAL_UPLOAD_APWORLD = 'bridge_upload_apworld';
+export const MODAL_PERMISSIONS = { [MODAL_REGISTER]: 'all', [MODAL_UPLOAD_APWORLD]: 'host' };
+
+const label = (text, description, component) => ({ type: 18, label: text, description, component });
+const fileUploadField = (customId, labelText) =>
+  label(labelText, 'Upload the file here', { type: 19, custom_id: customId, min_values: 1, max_values: 1, required: true });
+const textField = (customId, labelText, { required = true, maxLength = 100 } = {}) =>
+  label(labelText, undefined, { type: 4, custom_id: customId, style: 1, required, max_length: maxLength });
+
+export function registerModalResponse() {
+  return {
+    type: 9,
+    data: {
+      custom_id: MODAL_REGISTER,
+      title: 'Register as player',
+      components: [
+        fileUploadField('yaml', 'Player yaml file (.yaml)'),
+        textField('name', 'Slot name override (optional)', { required: false }),
+      ],
+    },
+  };
+}
+
+export function uploadApworldModalResponse() {
+  return {
+    type: 9,
+    data: {
+      custom_id: MODAL_UPLOAD_APWORLD,
+      title: 'Upload .apworld',
+      components: [
+        textField('game', 'Game session name'),
+        fileUploadField('file', '.apworld file'),
+      ],
+    },
+  };
+}
+
 export function parseInteraction(interaction) {
   const data = interaction.data || {};
+  if (interaction.type === 3) {
+    const resolved = data.resolved || {};
+    const parsed = { options: {}, attachments: {}, subcommand: null, subOptions: {}, modalCustomId: data.custom_id, modal: { fields: {}, files: {} } };
+    const walk = (comp) => {
+      if (!comp || typeof comp !== 'object') return;
+      if (comp.type === 18 && comp.component) return walk(comp.component); // Label wrapper
+      if (comp.type === 1 && Array.isArray(comp.components)) { comp.components.forEach(walk); return; } // legacy action row
+      if (comp.type === 19 || comp.type === 11) { // file upload
+        parsed.modal.files[comp.custom_id] = (comp.values || [])
+          .map((id) => resolved.attachments?.[id])
+          .filter(Boolean);
+      } else if (comp.type === 4) { // text input
+        parsed.modal.fields[comp.custom_id] = comp.value;
+      }
+    };
+    (data.components || []).forEach(walk);
+    return parsed;
+  }
   const resolved = data.resolved || {};
   const parsed = { options: {}, attachments: {}, subcommand: null, subOptions: {} };
   const top = data.options || [];
@@ -281,13 +341,13 @@ const handlers = {
   },
 
   async register(ctx) {
-    const att = ctx.attachments.yaml;
-    if (!att) throw new UserError('Attach a .yaml file with the "yaml" option.');
+    const att = ctx.attachments.yaml || ctx.modal?.files?.yaml?.[0];
+    if (!att) throw new UserError('Attach a .yaml file with the "yaml" option or via the upload dialog.');
     if (!/\.ya?ml$/i.test(att.filename)) throw new UserError(`"${att.filename}" is not a .yaml file.`);
     if (att.size > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     const buffer = await ctx.api.downloadAttachment(att.url);
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
-    const { slot, game } = parsePlayerYaml(buffer, ctx.options.name);
+    const { slot, game } = parsePlayerYaml(buffer, ctx.options.name || ctx.modal?.fields?.name);
     const playersDir = path.join(ctx.config.dataDir, 'players');
     fs.mkdirSync(playersDir, { recursive: true });
     fs.writeFileSync(path.join(playersDir, `${ctx.userId}.yaml`), buffer);
@@ -375,9 +435,9 @@ const handlers = {
   },
 
   async 'upload-apworld'(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    const att = ctx.attachments.file;
-    if (!att) throw new UserError('Attach a .apworld file with the "file" option.');
+    const game = resolveGame(ctx, ctx.options.game || ctx.modal?.fields?.game);
+    const att = ctx.attachments.file || ctx.modal?.files?.file?.[0];
+    if (!att) throw new UserError('Attach a .apworld file with the "file" option or via the upload dialog.');
     if (att.size > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     const buffer = await ctx.api.downloadAttachment(att.url);
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
@@ -526,4 +586,11 @@ export async function handleCommand(name, ctx) {
   if (!handler) throw new UserError(`Unknown command "${name}".`);
   ctx.ap = ctx.ap || ap;
   return handler(ctx);
+}
+
+export async function handleModal(customId, ctx) {
+  ctx.ap = ctx.ap || ap;
+  if (customId === MODAL_REGISTER) return handlers.register(ctx);
+  if (customId === MODAL_UPLOAD_APWORLD) return handlers['upload-apworld'](ctx);
+  throw new UserError('Unknown form.');
 }

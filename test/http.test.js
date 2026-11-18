@@ -216,6 +216,107 @@ test('/register with an attachment option resolves and downloads the file', asyn
   app3.close();
 });
 
+test('/register without an attachment answers with a modal (type 9) file upload', async () => {
+  const { status, body } = await postInteraction({
+    type: 2, token: 't-modal', guild_id: 'guild-1',
+    data: { name: 'register', options: [] },
+    member: { user: { id: 'user-1', username: 'tester' } },
+  });
+  assert.equal(status, 200);
+  assert.equal(body.type, 9);
+  assert.equal(body.data.custom_id, 'bridge_register');
+  const fileComp = body.data.components.find((c) => c.component?.type === 19);
+  assert.ok(fileComp, 'modal has a file upload component');
+  assert.equal(fileComp.component.custom_id, 'yaml');
+  assert.equal(fileComp.type, 18, 'file upload wrapped in a Label');
+});
+
+test('modal submit for register downloads the uploaded file and registers', async () => {
+  const yaml = 'name: Dave\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const apiDl = {
+    ...fakeApi,
+    async downloadAttachment() { return Buffer.from(yaml); },
+  };
+  const config4 = makeConfig();
+  const db4 = new Store(path.join(config4.dataDir, 'db.json'));
+  const app4 = createApp({ config: config4, db: db4, api: apiDl, dispatch: createDispatcher({ config: config4, db: db4, api: apiDl }) });
+  await new Promise((resolve) => app4.listen(0, '127.0.0.1', resolve));
+  const port = app4.address().port;
+  sent = [];
+  const raw = JSON.stringify({
+    type: 3, token: 't-modalsubmit', guild_id: 'guild-1',
+    data: {
+      custom_id: 'bridge_register',
+      components: [
+        { type: 18, label: 'Player yaml file', component: { type: 19, custom_id: 'yaml', values: ['a9'] } },
+        { type: 18, label: 'Name', component: { type: 4, custom_id: 'name', value: '' } },
+      ],
+      resolved: { attachments: { a9: { id: 'a9', filename: 'dave.yaml', size: yaml.length, url: 'https://cdn/dave.yaml' } } },
+    },
+    member: { user: { id: 'user-1', username: 'tester' } },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = Buffer.from(nacl.sign.detached(Buffer.from(timestamp + raw), keypair.secretKey)).toString('hex');
+  const res = await fetch(`http://127.0.0.1:${port}/interactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': signature, 'X-Signature-Timestamp': timestamp },
+    body: raw,
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.type, 5);
+  assert.equal(body.data.flags, 64); // ephemeral
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].payload.content, /Registered as player \*\*Dave\*\*/);
+  assert.equal(db4.getPlayer('user-1').slot, 'Dave');
+  app4.close();
+});
+
+test('upload-apworld modal submit is host-only', async () => {
+  const zip = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(50)]);
+  const apiDl = { ...fakeApi, async downloadAttachment() { return zip; } };
+  const config5 = makeConfig();
+  const db5 = new Store(path.join(config5.dataDir, 'db.json'));
+  db5.setGame('g', { name: 'g', status: 'setup', playerIds: [], apworlds: [] });
+  const app5 = createApp({ config: config5, db: db5, api: apiDl, dispatch: createDispatcher({ config: config5, db: db5, api: apiDl }) });
+  await new Promise((resolve) => app5.listen(0, '127.0.0.1', resolve));
+  const port = app5.address().port;
+  const postModal = async (userId) => {
+    sent = [];
+    const raw = JSON.stringify({
+      type: 3, token: `t-${userId}`, guild_id: 'guild-1',
+      data: {
+        custom_id: 'bridge_upload_apworld',
+        components: [
+          { type: 18, label: 'Game', component: { type: 4, custom_id: 'game', value: 'g' } },
+          { type: 18, label: 'File', component: { type: 19, custom_id: 'file', values: ['a1'] } },
+        ],
+        resolved: { attachments: { a1: { id: 'a1', filename: 'w.apworld', size: zip.length, url: 'https://cdn/w.apworld' } } },
+      },
+      member: { user: { id: userId, username: 'u' } },
+    });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = Buffer.from(nacl.sign.detached(Buffer.from(timestamp + raw), keypair.secretKey)).toString('hex');
+    const res = await fetch(`http://127.0.0.1:${port}/interactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': signature, 'X-Signature-Timestamp': timestamp },
+      body: raw,
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const denied = await postModal('user-1');
+  assert.equal(denied.body.type, 4);
+  assert.match(denied.body.data.content, /host/);
+  db5.addHost('host-1');
+  const ok = await postModal('host-1');
+  assert.equal(ok.body.type, 5);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].payload.content, /w\.apworld/);
+  app5.close();
+});
+
 test('health endpoint', async () => {
   const res = await fetch(`${baseUrl}/health`);
   assert.equal(res.status, 200);
