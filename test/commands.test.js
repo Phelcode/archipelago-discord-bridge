@@ -48,6 +48,7 @@ test('help lists role-appropriate commands', async () => {
   const out = await handleCommand('help', ctx);
   assert.match(out, /owner/);
   assert.match(out, /\/role/);
+  assert.match(out, /\/delete-game/);
   const spectator = await handleCommand('help', makeCtx({ userId: 'nobody' }));
   assert.match(spectator, /spectator/);
   assert.doesNotMatch(spectator, /\/setup-game/);
@@ -226,6 +227,77 @@ test('stats on a non-running game fails with a clear message', async () => {
   ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], apworlds: [] });
   ctx.options = { game: 'g' };
   await assert.rejects(() => handleCommand('stats', ctx), /not running/);
+});
+
+test('status lists active games by default, finished via scope, everything via all', async () => {
+  const ctx = makeCtx();
+  ctx.db.setGame('live', { name: 'live', status: 'running', port: 39001, playerIds: [] });
+  ctx.db.setGame('ready', { name: 'ready', status: 'generated', playerIds: [] });
+  ctx.db.setGame('old', { name: 'old', status: 'stopped', playerIds: [] });
+
+  let out = await handleCommand('status', ctx);
+  assert.match(out, /Active games/);
+  assert.match(out, /\*\*live\*\*/);
+  assert.match(out, /\*\*ready\*\*/);
+  assert.doesNotMatch(out, /\*\*old\*\*/);
+
+  ctx.options = { scope: 'finished' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /Finished games/);
+  assert.match(out, /\*\*old\*\*/);
+  assert.doesNotMatch(out, /\*\*live\*\*/);
+
+  ctx.options = { scope: 'all' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /\*\*live\*\*/);
+  assert.match(out, /\*\*old\*\*/);
+
+  ctx.options = { game: 'old' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /\*\*old\*\*/);
+  assert.doesNotMatch(out, /\*\*live\*\*/);
+});
+
+test('status with no games explains how to create one', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('status', ctx);
+  assert.match(out, /No games yet/);
+  assert.match(out, /\/setup-game/);
+});
+
+test('delete-game stops a running server, removes the db entry and files', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: [], pid: 12345 });
+  const dir = realAp.gameDir(ctx.config, { name: 'g' });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'server.log'), 'log');
+  let stopped = false;
+  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; }, isServerProcessAlive: () => true };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('delete-game', ctx);
+  assert.match(out, /Deleted game \*\*g\*\*/);
+  assert.equal(stopped, true);
+  assert.equal(ctx.db.getGame('g'), null);
+  assert.equal(fs.existsSync(dir), false);
+});
+
+test('delete-game does not touch a stopped game server but still removes it', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.setGame('g', { name: 'g', status: 'stopped', playerIds: [] });
+  let stopped = false;
+  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; } };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('delete-game', ctx);
+  assert.match(out, /Deleted game/);
+  assert.equal(stopped, false);
+  assert.equal(ctx.db.getGame('g'), null);
+});
+
+test('delete-game on an unknown game fails clearly', async () => {
+  const ctx = makeCtx();
+  ctx.options = { game: 'nope' };
+  await assert.rejects(() => handleCommand('delete-game', ctx), /Unknown game/);
 });
 
 test('role add/remove/list manage hosts', async () => {

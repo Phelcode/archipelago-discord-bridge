@@ -110,6 +110,15 @@ test('host-only commands are denied for non-hosts (no modal shown)', async () =>
   assert.equal(calls.showModal.length, 0);
 });
 
+test('delete-game is host-only', async () => {
+  const { dispatch } = setup();
+  const { interaction, calls } = chat('delete-game', { options: [{ name: 'game', type: 3, value: 'g' }] });
+  await dispatch(interaction);
+  assert.equal(calls.reply.length, 1);
+  assert.match(calls.reply[0].content, /Only hosts/);
+  assert.equal(calls.deferReply.length, 0);
+});
+
 test('always-modal commands open a modal instead of replying', async () => {
   const { dispatch } = setup();
   const { interaction, calls } = chat('register');

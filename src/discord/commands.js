@@ -47,7 +47,22 @@ export const COMMAND_DEFINITIONS = [
     options: [gameOption(true), { name: 'port', description: 'Port to listen on (optional)', type: INTEGER, required: false }],
   },
   { name: 'stop', description: '[host] Stop the Archipelago server for a game', options: [gameOption(true)] },
-  { name: 'status', description: 'Show game sessions and server status', options: [gameOption(false)] },
+  { name: 'delete-game', description: '[host] Delete a game session and its files', options: [gameOption(true)] },
+  {
+    name: 'status',
+    description: 'Show game sessions and server status (active games by default)',
+    options: [
+      gameOption(false),
+      {
+        name: 'scope', description: 'Which games to list', type: STRING, required: false,
+        choices: [
+          { name: 'active — started or waiting to be started (default)', value: 'active' },
+          { name: 'finished — stopped games', value: 'finished' },
+          { name: 'all — every game', value: 'all' },
+        ],
+      },
+    ],
+  },
   { name: 'stats', description: 'Per-player stats: checks found / total and completion status', options: [gameOption(false)] },
   { name: 'game-stats', description: 'Gamewide stats: total checks, found, hints, seed', options: [gameOption(false)] },
   { name: 'hints', description: 'Show your hints (if hints are enabled)', options: [gameOption(false)] },
@@ -130,6 +145,7 @@ export const PERMISSIONS = {
   generate: 'host',
   start: 'host',
   stop: 'host',
+  'delete-game': 'host',
   role: 'owner',
   status: 'all',
   stats: 'all',
@@ -209,6 +225,19 @@ export const ALWAYS_MODAL = {
 };
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
+
+// "Active" games are started (running) or waiting to be started (set up /
+// generating / generated). "Finished" games are stopped.
+const ACTIVE_STATUSES = new Set(['setup', 'generating', 'generated', 'running']);
+
+function formatGameLine(ctx, g) {
+  const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
+  const players = (g.playerIds || []).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
+  return [
+    `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
+    `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
+  ].join('\n');
+}
 
 export function statusName(status) {
   return STATUS_NAMES[status] ?? `status ${status}`;
@@ -321,9 +350,9 @@ function formatGameStats(game, probeResult) {
 const handlers = {
   async help(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
-    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status, /stats, /game-stats — everyone (spectator view)'];
+    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status [scope:], /stats, /game-stats — everyone (spectator view)'];
     if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
-    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate, /start, /stop — host commands (open forms)');
+    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld, /generate — host commands (open forms)', '• /start, /stop, /delete-game — host: run and remove game sessions');
     if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
     return lines.join('\n');
   },
@@ -515,20 +544,28 @@ const handlers = {
     return stopped ? `Stopped game **${game.name}**.` : `Game **${game.name}** was not running.`;
   },
 
+  async 'delete-game'(ctx) {
+    const game = resolveGame(ctx, ctx.options.game);
+    if (game.status === 'running') ctx.ap.stopGame(ctx.config, game);
+    ctx.db.removeGame(game.name);
+    fs.rmSync(ctx.ap.gameDir(ctx.config, game), { recursive: true, force: true });
+    return `Deleted game **${game.name}** (server stopped if it was running, session and files removed).`;
+  },
+
   async status(ctx) {
-    const game = ctx.options.game ? resolveGame(ctx, ctx.options.game) : null;
-    const games = game ? [game] : ctx.db.listGames();
-    if (!games.length) return 'No games yet. A host can create one with /setup-game.';
-    const apworlds = ctx.ap.listApworlds(ctx.config);
-    const lines = [`Available .apworld files (used by every game): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
-    for (const g of games) {
-      const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
-      const players = (g.playerIds || []).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
-      lines.push([
-        `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
-        `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
-      ].join('\n'));
+    if (ctx.options.game) return formatGameLine(ctx, resolveGame(ctx, ctx.options.game));
+    const scope = ctx.options.scope || 'active';
+    const all = ctx.db.listGames();
+    const games = all.filter((g) => (scope === 'all' ? true : scope === 'finished' ? g.status === 'stopped' : ACTIVE_STATUSES.has(g.status)));
+    if (!all.length) return 'No games yet. A host can create one with /setup-game.';
+    if (!games.length) {
+      if (scope === 'finished') return 'No finished games. /status lists active games by default; /status scope: all lists everything.';
+      return 'No active games (started or waiting to be started). Finished games: /status scope: finished — everything: /status scope: all.';
     }
+    const apworlds = ctx.ap.listApworlds(ctx.config);
+    const header = scope === 'all' ? '**All games**' : scope === 'finished' ? '**Finished games**' : '**Active games** (started or waiting to be started)';
+    const lines = [header, `Available .apworld files (used by every game): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
+    for (const g of games) lines.push(formatGameLine(ctx, g));
     return lines.join('\n');
   },
 

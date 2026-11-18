@@ -14,7 +14,7 @@ Roles are assigned by Discord ID:
 | Role | Who | Can do |
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
-| **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/generate`, `/start`, `/stop` |
+| **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/generate`, `/start`, `/stop`, `/delete-game` |
 | **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/stats`, `/game-stats` |
 | **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/game-stats`, `/players` |
 
@@ -97,7 +97,8 @@ Roles are assigned by Discord ID:
 - `/generate` — host: always opens a modal (game name + optional seed, random if empty)
 - `/start game: [port:]` — host: start the Archipelago server
 - `/stop game:` — host: stop the server
-- `/status [game:]` — everyone: session/server status
+- `/status [game:] [scope:]` — everyone: session/server status. Without `game:`, lists games — **active ones by default** (started or waiting to be started); `scope: finished` shows stopped games, `scope: all` shows everything. With `game:`, shows that one game regardless of scope
+- `/delete-game game:` — host: stop the server if running, then delete the game session and its files
 - `/stats [game:]` — everyone: checks per player (`found/total`, %, status, hint points)
 - `/game-stats [game:]` — everyone: gamewide totals, hints, seed
 - `/hints [game:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
