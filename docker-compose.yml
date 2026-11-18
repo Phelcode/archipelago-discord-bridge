@@ -1,0 +1,13 @@
+services:
+  bridge:
+    build: .
+    container_name: archipelago-discord-bridge
+    env_file: .env
+    ports:
+      # The interactions endpoint must be reachable by Discord at a public
+      # HTTPS URL (see README). This port only needs to be exposed locally if
+      # you terminate TLS with a tunnel on the host.
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

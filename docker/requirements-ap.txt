@@ -1,0 +1,14 @@
+# Python dependencies needed to run Archipelago's generator and server
+# (subset of Archipelago's requirements.txt; GUI client deps excluded).
+websockets>=13.1,<14
+PyYAML
+colorama
+jellyfish
+jinja2
+schema
+platformdirs
+certifi
+orjson
+typing_extensions
+pathspec
+bsdiff4
