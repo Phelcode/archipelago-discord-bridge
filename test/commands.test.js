@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
-import { handleCommand, handleModal, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, registerModalResponse, uploadApworldModalResponse, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD } from '../src/discord/commands.js';
+import { handleCommand, handleModal, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, registerModalResponse, uploadApworldModalResponse, setupGameModalResponse, generateModalResponse, ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -281,14 +281,14 @@ test('command payloads support guild and user install in all contexts', () => {
   }
 });
 
-test('file-upload commands declare attachment (type 10) options', () => {
+test('form commands take no inline options and always open a modal', () => {
   const byName = Object.fromEntries(COMMAND_DEFINITIONS.map((d) => [d.name, d]));
-  const registerYaml = byName.register.options.find((o) => o.name === 'yaml');
-  const uploadFile = byName['upload-apworld'].options.find((o) => o.name === 'file');
-  assert.equal(registerYaml.type, 10);
-  assert.equal(registerYaml.required, false); // optional: empty -> modal upload dialog
-  assert.equal(uploadFile.type, 10);
-  assert.equal(uploadFile.required, false);
+  for (const name of ['register', 'setup-game', 'generate', 'upload-apworld']) {
+    assert.ok(ALWAYS_MODAL[name], `${name} is always-modal`);
+    assert.deepEqual(byName[name].options, [], `${name} has no inline options`);
+    const modal = ALWAYS_MODAL[name]();
+    assert.equal(modal.type, 9);
+  }
   // required options must precede optional ones (Discord validation rule)
   for (const def of COMMAND_DEFINITIONS) {
     const opts = def.options || [];
@@ -297,6 +297,35 @@ test('file-upload commands declare attachment (type 10) options', () => {
       assert.ok(opts.slice(firstOptional).every((o) => !o.required), `${def.name}: required option after optional`);
     }
   }
+});
+
+test('whoami replaces the built-in /me name', () => {
+  const names = COMMAND_DEFINITIONS.map((d) => d.name);
+  assert.ok(names.includes('whoami'));
+  assert.ok(!names.includes('me'));
+});
+
+test('setup-game and generate read fields from modal submits', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.modal = { fields: { name: 'Modal Game', password: 'pw' }, files: {} };
+  const out = await handleCommand('setup-game', ctx);
+  assert.match(out, /modal-game/);
+  assert.equal(ctx.db.getGame('modal-game').password, 'pw');
+
+  const genCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'host-1' });
+  genCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const g = genCtx.db.getGame('modal-game');
+  g.playerIds = ['user-1'];
+  genCtx.db.setGame('modal-game', g);
+  genCtx.ap = { ...realAp, async generateGame(c, d, game, seed) { return { multidata: '/tmp/x.zip', spoiler: '/tmp/s.txt', seed: '1', seedNumber: seed, players: ['Alice'], log: '' }; } };
+  genCtx.modal = { fields: { game: 'modal-game', seed: '424242' }, files: {} };
+  const genOut = await handleCommand('generate', genCtx);
+  assert.match(genOut, /424242/);
+  assert.equal(genCtx.db.getGame('modal-game').seedNumber, 424242);
+
+  genCtx.modal = { fields: { game: 'modal-game', seed: 'abc' }, files: {} };
+  await assert.rejects(() => handleCommand('generate', genCtx), /integer/);
 });
 
 test('parseInteraction parses modal submits (Label + FileUpload components)', () => {
@@ -330,6 +359,12 @@ test('modal responses contain a file-upload component (type 19 in a Label)', () 
   assert.equal(up.type, 9);
   assert.ok(up.data.components.some((c) => c.component.type === 19 && c.component.custom_id === 'file'));
   assert.ok(up.data.components.some((c) => c.component.type === 4 && c.component.custom_id === 'game'));
+  const setup = setupGameModalResponse();
+  assert.equal(setup.type, 9);
+  assert.ok(setup.data.components.some((c) => c.component.type === 4 && c.component.custom_id === 'name'));
+  const gen = generateModalResponse();
+  assert.equal(gen.type, 9);
+  assert.ok(gen.data.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
 });
 
 test('registerAllCommands updates the app and registers global (+guild) commands', async () => {

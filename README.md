@@ -97,10 +97,10 @@ Roles are assigned by Discord ID:
 ## Commands
 
 - `/help` — commands available to your role
-- `/register` (attachment: your player `.yaml`) — register as a player
+- `/register` (attach your player `.yaml`, or leave the option empty to get a modal upload dialog) — register as a player
 - `/unregister`, `/me`, `/join game:`, `/leave game:`, `/players [game:]`
 - `/setup-game name: password:` — host: create a game session (discards previous player registrations/yamls — everyone must `/register` again)
-- `/upload-apworld game: file:` — host: upload a `.apworld`
+- `/upload-apworld game: [file:]` — host: upload a `.apworld` (attach it, or leave `file` empty for a modal upload dialog)
 - `/generate game: [seed:]` — host: generate the multiworld
 - `/start game: [port:]` — host: start the Archipelago server
 - `/stop game:` — host: stop the server

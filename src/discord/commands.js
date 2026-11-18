@@ -19,37 +19,28 @@ export const COMMAND_DEFINITIONS = [
   { name: 'help', description: 'Show the commands available to your role' },
   {
     name: 'register',
-    description: 'Register as a player by uploading your Archipelago player yaml',
-    options: [
-      { name: 'yaml', description: 'Your player .yaml file (or leave empty to get an upload dialog)', type: ATTACHMENT, required: false },
-      { name: 'name', description: 'Slot name override (default: name inside the yaml)', type: STRING, required: false },
-    ],
+    description: 'Register as a player (opens an upload dialog for your player yaml)',
+    options: [],
   },
   { name: 'unregister', description: 'Remove your player registration' },
-  { name: 'me', description: 'Show your role and registration' },
+  { name: 'whoami', description: 'Show your role and registration' },
   { name: 'join', description: 'Join a game session with your registered player yaml', options: [gameOption(true)] },
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
   {
     name: 'setup-game',
-    description: '[host] Create a new game session',
-    options: [
-      { name: 'name', description: 'Name of the game session', type: STRING, required: true },
-      { name: 'password', description: 'Server password for the game (optional)', type: STRING, required: false },
-    ],
+    description: '[host] Create a new game session (opens a form)',
+    options: [],
   },
   {
     name: 'upload-apworld',
-    description: '[host] Upload a custom .apworld file to a game',
-    options: [
-      gameOption(true),
-      { name: 'file', description: 'The .apworld file (or leave empty to get an upload dialog)', type: ATTACHMENT, required: false },
-    ],
+    description: '[host] Upload a custom .apworld file to a game (opens an upload dialog)',
+    options: [],
   },
   {
     name: 'generate',
-    description: '[host] Generate the multiworld for a game from its players and apworlds',
-    options: [gameOption(true), { name: 'seed', description: 'Seed (optional, random if omitted)', type: INTEGER, required: false }],
+    description: '[host] Generate the multiworld for a game (opens a form)',
+    options: [],
   },
   {
     name: 'start',
@@ -115,7 +106,7 @@ export const PERMISSIONS = {
   help: 'all',
   register: 'all',
   unregister: 'all',
-  me: 'all',
+  whoami: 'all',
   join: 'all',
   leave: 'all',
   players: 'all',
@@ -131,7 +122,7 @@ export const PERMISSIONS = {
   hints: 'all',
 };
 
-export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'me', 'hints', 'role']);
+export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'whoami', 'hints', 'role']);
 
 // Modal fallback for file uploads: used when the slash command's attachment
 // option was left empty. File Upload is component type 19 inside a Label
@@ -139,7 +130,14 @@ export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'me', 'hint
 // IDs in component.values, resolved via data.resolved.attachments.
 export const MODAL_REGISTER = 'bridge_register';
 export const MODAL_UPLOAD_APWORLD = 'bridge_upload_apworld';
-export const MODAL_PERMISSIONS = { [MODAL_REGISTER]: 'all', [MODAL_UPLOAD_APWORLD]: 'host' };
+export const MODAL_SETUP_GAME = 'bridge_setup_game';
+export const MODAL_GENERATE = 'bridge_generate';
+export const MODAL_PERMISSIONS = {
+  [MODAL_REGISTER]: 'all',
+  [MODAL_UPLOAD_APWORLD]: 'host',
+  [MODAL_SETUP_GAME]: 'host',
+  [MODAL_GENERATE]: 'host',
+};
 
 const label = (text, description, component) => ({ type: 18, label: text, description, component });
 const fileUploadField = (customId, labelText) =>
@@ -174,6 +172,42 @@ export function uploadApworldModalResponse() {
     },
   };
 }
+
+export function setupGameModalResponse() {
+  return {
+    type: 9,
+    data: {
+      custom_id: MODAL_SETUP_GAME,
+      title: 'Create game session',
+      components: [
+        textField('name', 'Game session name'),
+        textField('password', 'Server password (optional)', { required: false, maxLength: 100 }),
+      ],
+    },
+  };
+}
+
+export function generateModalResponse() {
+  return {
+    type: 9,
+    data: {
+      custom_id: MODAL_GENERATE,
+      title: 'Generate multiworld',
+      components: [
+        textField('game', 'Game session name'),
+        textField('seed', 'Seed (optional, random if empty)', { required: false, maxLength: 20 }),
+      ],
+    },
+  };
+}
+
+// Commands that always answer with a modal instead of taking inline options.
+export const ALWAYS_MODAL = {
+  register: registerModalResponse,
+  'upload-apworld': uploadApworldModalResponse,
+  'setup-game': setupGameModalResponse,
+  generate: generateModalResponse,
+};
 
 export function parseInteraction(interaction) {
   const data = interaction.data || {};
@@ -362,7 +396,7 @@ const handlers = {
     return 'Your player registration was removed.';
   },
 
-  async me(ctx) {
+  async whoami(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
     const player = ctx.db.getPlayer(ctx.userId);
     return [`**Role:** ${role}`, player ? `**Registered as:** ${player.slot} (game: ${player.game})` : '**Not registered as a player** (use /register)'].join('\n');
@@ -404,8 +438,9 @@ const handlers = {
   },
 
   async 'setup-game'(ctx) {
-    const name = String(ctx.options.name || '').trim();
+    const name = String(ctx.options.name || ctx.modal?.fields?.name || '').trim();
     if (!name) throw new UserError('Provide a game name.');
+    const password = ctx.options.password || ctx.modal?.fields?.password || null;
     const slug = ctx.ap.slugify(name);
     if (ctx.db.getGame(slug)) throw new UserError(`A game named "${name}" already exists.`);
     // A new game discards previous player registrations and their uploaded
@@ -419,7 +454,7 @@ const handlers = {
     const game = {
       name: slug,
       displayName: name,
-      password: ctx.options.password || null,
+      password: password || null,
       createdBy: ctx.userId,
       status: 'setup',
       apworlds: [],
@@ -448,11 +483,17 @@ const handlers = {
   },
 
   async generate(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
+    const game = resolveGame(ctx, ctx.options.game || ctx.modal?.fields?.game);
     if (game.status === 'running') throw new UserError('This game is running; /stop it first.');
+    const seedRaw = ctx.options.seed ?? ctx.modal?.fields?.seed;
+    let seed;
+    if (seedRaw !== undefined && seedRaw !== null && String(seedRaw).trim() !== '') {
+      seed = Number(seedRaw);
+      if (!Number.isInteger(seed)) throw new UserError('Seed must be an integer.');
+    }
     game.status = 'generating';
     ctx.db.setGame(game.name, game);
-    const result = await ctx.ap.generateGame(ctx.config, ctx.db, game, ctx.options.seed);
+    const result = await ctx.ap.generateGame(ctx.config, ctx.db, game, seed);
     game.status = 'generated';
     game.multidata = result.multidata;
     game.spoiler = result.spoiler;
@@ -592,5 +633,7 @@ export async function handleModal(customId, ctx) {
   ctx.ap = ctx.ap || ap;
   if (customId === MODAL_REGISTER) return handlers.register(ctx);
   if (customId === MODAL_UPLOAD_APWORLD) return handlers['upload-apworld'](ctx);
+  if (customId === MODAL_SETUP_GAME) return handlers['setup-game'](ctx);
+  if (customId === MODAL_GENERATE) return handlers.generate(ctx);
   throw new UserError('Unknown form.');
 }

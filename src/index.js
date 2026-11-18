@@ -5,7 +5,7 @@ import { Store } from './store.js';
 import { verifySignature, isFreshTimestamp } from './discord/verify.js';
 import { createDiscordApi } from './discord/api.js';
 import { startGateway } from './discord/gateway.js';
-import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, MODAL_PERMISSIONS, MODAL_REGISTER, parseInteraction, handleCommand, handleModal, registerAllCommands, registerModalResponse, uploadApworldModalResponse, UserError } from './discord/commands.js';
+import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, MODAL_PERMISSIONS, MODAL_REGISTER, ALWAYS_MODAL, parseInteraction, handleCommand, handleModal, registerAllCommands, UserError } from './discord/commands.js';
 import { canHost, isOwner } from './discord/permissions.js';
 
 function readBody(req) {
@@ -104,10 +104,8 @@ export function createDispatcher({ config, db, api }) {
     if (perm === 'host' && !canHost(db, config, userId)) {
       return { type: 4, data: { flags: 64, content: '❌ Only hosts (or the owner) can use this command.' } };
     }
-    // If the file wasn't attached to the command, answer with a modal that has
-    // a file-upload component instead.
-    if (name === 'register' && !parsed.attachments.yaml) return registerModalResponse();
-    if (name === 'upload-apworld' && !parsed.attachments.file) return uploadApworldModalResponse();
+    // These commands always answer with a modal (file upload / form fields).
+    if (ALWAYS_MODAL[name]) return ALWAYS_MODAL[name]();
     const ephemeral = EPHEMERAL_COMMANDS.has(name);
     processInteraction(interaction, { config, db, api }, (ctx) => handleCommand(name, ctx))
       .catch((err) => console.error('Interaction processing failed:', err));

@@ -129,7 +129,7 @@ test('/help defers then edits the original response', async () => {
 test('ephemeral command defers with the ephemeral flag', async () => {
   const { body } = await postInteraction({
     type: 2, token: 't5', guild_id: 'guild-1',
-    data: { name: 'me', options: [] },
+    data: { name: 'whoami', options: [] },
     member: { user: { id: 'user-1', username: 'tester' } },
   });
   assert.equal(body.type, 5);
@@ -169,66 +169,31 @@ test('user-install DM interaction (no guild, no member) is handled', async () =>
   app2.close();
 });
 
-test('/register with an attachment option resolves and downloads the file', async () => {
-  const yaml = 'name: Carol\ngame: ChecksFinder\nChecksFinder: {}\n';
-  const apiWithDownload = {
-    ...fakeApi,
-    downloads: [],
-    async downloadAttachment(url) {
-      this.downloads.push(url);
-      return Buffer.from(yaml);
-    },
-  };
-  const config3 = makeConfig();
-  const db3 = new Store(path.join(config3.dataDir, 'db.json'));
-  const dispatch3 = createDispatcher({ config: config3, db: db3, api: apiWithDownload });
-  const app3 = createApp({ config: config3, db: db3, api: apiWithDownload, dispatch: dispatch3 });
-  await new Promise((resolve) => app3.listen(0, '127.0.0.1', resolve));
-  const port = app3.address().port;
-  sent = [];
-  const raw = JSON.stringify({
+test('/register always answers with a modal, even if an attachment was passed', async () => {
+  const { status, body } = await postInteraction({
     type: 2, token: 't-att', guild_id: 'guild-1',
     data: {
       name: 'register',
       options: [{ name: 'yaml', type: 10, value: 'att-123' }],
-      resolved: {
-        attachments: {
-          'att-123': { id: 'att-123', filename: 'carol.yaml', size: yaml.length, url: 'https://cdn.discordapp.com/attachments/1/2/carol.yaml', content_type: 'application/x-yaml' },
-        },
-      },
+      resolved: { attachments: { 'att-123': { id: 'att-123', filename: 'carol.yaml', size: 5, url: 'https://cdn/x' } } },
     },
-    member: { user: { id: 'user-1', username: 'tester' } },
-  });
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const signature = Buffer.from(nacl.sign.detached(Buffer.from(timestamp + raw), keypair.secretKey)).toString('hex');
-  const res = await fetch(`http://127.0.0.1:${port}/interactions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': signature, 'X-Signature-Timestamp': timestamp },
-    body: raw,
-  });
-  assert.equal(res.status, 200);
-  assert.equal((await res.json()).type, 5); // deferred (register is ephemeral)
-  await new Promise((r) => setTimeout(r, 100));
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].payload.content, /Registered as player \*\*Carol\*\*/);
-  assert.deepEqual(apiWithDownload.downloads, ['https://cdn.discordapp.com/attachments/1/2/carol.yaml']);
-  assert.equal(db3.getPlayer('user-1').slot, 'Carol');
-  app3.close();
-});
-
-test('/register without an attachment answers with a modal (type 9) file upload', async () => {
-  const { status, body } = await postInteraction({
-    type: 2, token: 't-modal', guild_id: 'guild-1',
-    data: { name: 'register', options: [] },
     member: { user: { id: 'user-1', username: 'tester' } },
   });
   assert.equal(status, 200);
   assert.equal(body.type, 9);
   assert.equal(body.data.custom_id, 'bridge_register');
-  const fileComp = body.data.components.find((c) => c.component?.type === 19);
-  assert.ok(fileComp, 'modal has a file upload component');
-  assert.equal(fileComp.component.custom_id, 'yaml');
-  assert.equal(fileComp.type, 18, 'file upload wrapped in a Label');
+});
+
+test('setup-game, generate and upload-apworld always answer with a modal', async () => {
+  for (const name of ['setup-game', 'generate', 'upload-apworld']) {
+    const { body } = await postInteraction({
+      type: 2, token: `t-${name}`, guild_id: 'guild-1',
+      data: { name, options: [] },
+      member: { user: { id: 'owner-1', username: 'owner' } },
+    });
+    assert.equal(body.type, 9, `${name} returns a modal`);
+    assert.match(body.data.custom_id, /^bridge_/);
+  }
 });
 
 test('modal submit for register downloads the uploaded file and registers', async () => {
