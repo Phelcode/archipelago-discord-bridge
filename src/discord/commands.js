@@ -123,34 +123,63 @@ export function guildCommandPayload(definitions) {
   return definitions.map((def) => ({ ...def, integration_types: [0], contexts: [0] }));
 }
 
-export async function registerAllCommands(client, { guildIds = [], definitions, retryDelayMs = 5000 }) {
-  try {
-    await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
-  } catch (err) {
-    console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
+const API_BASE = 'https://discord.com/api/v10';
+
+// Registration uses plain fetch with an explicit timeout instead of the
+// discord.js REST queue: the library silently waits out rate limits and
+// retries aborted requests (15s x 4) with no log output, which made a stuck
+// registration indistinguishable from a working one. Here every step is
+// logged and bounded.
+async function apiFetch(config, method, path, body, timeoutMs = 10000) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: { Authorization: `Bot ${config.discordToken}`, 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    const waitMs = Math.max(0, (data.retry_after ?? 1)) * 1000;
+    console.warn(`[commands] 429 on ${method} ${path}, waiting ${waitMs}ms as Discord asks`);
+    await new Promise((r) => setTimeout(r, waitMs));
+    return apiFetch(config, method, path, body, timeoutMs);
   }
-  // PUT commands replaces the whole list server-side, so a single set both
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Discord API ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+export async function registerAllCommands(config, { guildIds = [], definitions, retryDelayMs = 5000 }) {
+  try {
+    await apiFetch(config, 'PATCH', '/applications/@me', { integration_types: INTEGRATION_TYPES_BOTH });
+    console.log('[commands] integration types set to guild + user install');
+  } catch (err) {
+    console.warn(`[commands] could not set integration_types (${err.message}); enable Guild + User install in the dev portal if needed.`);
+  }
+  // PUT commands replaces the whole list server-side, so a single call both
   // clears stale commands and registers the current set — no window in which
-  // zero commands are registered. Global first, with one retry, so a transient
-  // failure can't leave the app commandless.
+  // zero commands are registered. Global first, with one retry.
   const globalPayload = globalCommandPayload(definitions);
+  const globalPath = `/applications/${config.discordApplicationId}/commands`;
+  console.log(`[commands] registering ${definitions.length} global commands...`);
   try {
-    await client.application.commands.set(globalPayload);
+    await apiFetch(config, 'PUT', globalPath, globalPayload);
   } catch (err) {
-    console.warn(`Global command registration failed (${err.message}); retrying once in ${retryDelayMs}ms...`);
+    console.warn(`[commands] global registration failed (${err.message}); retrying once in ${retryDelayMs}ms...`);
     await new Promise((r) => setTimeout(r, retryDelayMs));
-    await client.application.commands.set(globalPayload); // throws if still failing
+    await apiFetch(config, 'PUT', globalPath, globalPayload); // throws if still failing
   }
-  console.log(`Registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
+  console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
   for (const guildId of guildIds) {
     try {
-      const guild = await client.guilds.fetch(guildId);
-      await guild.commands.set(guildCommandPayload(definitions));
-      console.log(`Registered ${definitions.length} commands in guild ${guildId} (instant there).`);
+      await apiFetch(config, 'PUT', `/applications/${config.discordApplicationId}/guilds/${guildId}/commands`, guildCommandPayload(definitions));
+      console.log(`[commands] registered ${definitions.length} commands in guild ${guildId} (instant there).`);
     } catch (err) {
       // Typically 403 Missing Access when the app isn't in that guild with the
       // bot + applications.commands scopes. Global commands still apply.
-      console.warn(`Guild command registration in ${guildId} failed (${err.message}). Global commands are registered (propagate within ~1h); add the app to that guild with the bot and applications.commands scopes for instant guild commands.`);
+      console.warn(`[commands] guild registration in ${guildId} failed (${err.message}); add the app to that guild with the bot + applications.commands scopes for instant guild commands. Global commands still apply.`);
     }
   }
 }
@@ -158,15 +187,15 @@ export async function registerAllCommands(client, { guildIds = [], definitions, 
 // Registers commands when called (on client ready) and retries every
 // intervalMs until it succeeds, so a transient failure can't leave the app
 // without slash commands. Returns a stop function.
-export function scheduleCommandRegistration(client, opts, { intervalMs = 60000 } = {}) {
+export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 } = {}) {
   let stopped = false;
   let timer = null;
   const attempt = async () => {
     try {
-      await registerAllCommands(client, opts);
+      await registerAllCommands(config, opts);
       return true;
     } catch (err) {
-      console.error('Could not register slash commands with Discord:', err.message);
+      console.error('[commands] registration failed:', err.message);
       return false;
     }
   };

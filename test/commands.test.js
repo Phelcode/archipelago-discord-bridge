@@ -587,83 +587,101 @@ test('start with a bad stored seed fails clearly and stays in setup', async () =
   assert.equal(ctx.db.getGame('g').status, 'setup');
 });
 
-function mockClient({ failGuild = false, failAppEdit = false } = {}) {
+
+const apiConfig = { discordToken: 'tok', discordApplicationId: 'app-1' };
+
+function mockFetch(handler) {
   const calls = [];
-  const client = {
-    application: {
-      edit: async (patch) => { if (failAppEdit) throw new Error('403'); calls.push(['app', patch]); },
-      commands: { set: async (defs) => { calls.push(['global', defs]); } },
-    },
-    guilds: {
-      fetch: async (id) => ({
-        commands: {
-          set: async (defs) => {
-            if (failGuild) throw new Error('Discord APIError: 403 Missing Access');
-            calls.push(['guild', id, defs]);
-          },
-        },
-      }),
-    },
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push([method, url, body]);
+    return handler(method, url, body);
   };
-  return { client, calls };
+  return { calls, restore: () => { globalThis.fetch = orig; } };
 }
 
-test('registerAllCommands registers global commands (full replace) plus guild commands for each guild id', async () => {
-  const { client, calls } = mockClient();
-  await registerAllCommands(client, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
-  assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  // global set is a full server-side replace (clears stale + re-adds, no gap)
-  assert.equal(calls[1][0], 'global');
-  assert.equal(calls[1][1][0].integration_types[1], 1);
-  assert.deepEqual(calls[1][1][0].contexts, [0, 1, 2]);
-  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // no separate clear call
-  assert.equal(calls[2][0], 'guild');
-  assert.equal(calls[2][1], 'g1');
+const okJson = (data = []) => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const errRes = (status, data = { message: 'err' }) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+
+test('registerAllCommands sets integration types, registers global commands, then per-guild commands', async () => {
+  const { calls, restore } = mockFetch(() => okJson());
+  try {
+    await registerAllCommands(apiConfig, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  } finally { restore(); }
+  assert.equal(calls[0][0], 'PATCH');
+  assert.match(calls[0][1], /\/applications\/@me$/);
+  assert.deepEqual(calls[0][2], { integration_types: [0, 1] });
+  // one atomic PUT for global commands (full server-side replace, no clear gap)
+  assert.equal(calls[1][0], 'PUT');
+  assert.match(calls[1][1], /\/applications\/app-1\/commands$/);
+  assert.equal(calls[1][2][0].integration_types[1], 1);
+  assert.deepEqual(calls[1][2][0].contexts, [0, 1, 2]);
+  assert.equal(calls.filter((c) => c[1].endsWith('/applications/app-1/commands')).length, 1);
+  assert.match(calls[2][1], /\/guilds\/g1\/commands$/);
   assert.deepEqual(calls[2][2][0].integration_types, [0]);
-  assert.equal(calls[3][0], 'guild');
-  assert.equal(calls[3][1], 'g2');
-
-  const second = mockClient();
-  await registerAllCommands(second.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
-  assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.equal(second.calls.filter((c) => c[0] === 'global').length, 1);
+  assert.match(calls[3][1], /\/guilds\/g2\/commands$/);
 });
 
-test('registerAllCommands retries a failed global registration once, then throws if still failing', async () => {
-  const { client, calls } = mockClient();
-  let n = 0;
-  const origSet = client.application.commands.set;
-  client.application.commands.set = async (defs) => { n += 1; if (n === 1) throw new Error('500'); return origSet(defs); };
-  await registerAllCommands(client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
-  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // succeeded on retry
-
-  const failing = mockClient();
-  failing.client.application.commands.set = async () => { throw new Error('500'); };
-  await assert.rejects(
-    () => registerAllCommands(failing.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }),
-    /500/,
-  );
+test('registerAllCommands without guild ids only touches the application and global commands', async () => {
+  const { calls, restore } = mockFetch(() => okJson());
+  try {
+    await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  } finally { restore(); }
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((c) => !c[1].includes('/guilds/')));
 });
 
-test('scheduleCommandRegistration logs immediately and retries until registration succeeds', async () => {
-  const { client, calls } = mockClient();
+test('registerAllCommands waits out 429s, retries a failed global PUT once, then throws if still failing', async () => {
   let n = 0;
-  const origSet = client.application.commands.set;
-  client.application.commands.set = async (defs) => {
-    n += 1;
-    if (n < 3) throw new Error('500 transient');
-    return origSet(defs);
-  };
-  const stop = scheduleCommandRegistration(client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }, { intervalMs: 5 });
-  await new Promise((r) => setTimeout(r, 150));
-  stop();
+  const { calls, restore } = mockFetch((method, url) => {
+    if (url.endsWith('/commands')) {
+      n += 1;
+      if (n === 1) return errRes(500, { message: 'boom' });
+      if (n === 2) return errRes(429, { retry_after: 0.01 });
+    }
+    return okJson();
+  });
+  try {
+    await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  } finally { restore(); }
+  assert.equal(n, 3); // 500 -> internal retry -> 429 (waited) -> success
+  assert.equal(calls.filter((c) => c[0] === 'PUT' && c[1].endsWith('/commands')).length, 3);
+
+  const failing = mockFetch(() => errRes(500, { message: 'nope' }));
+  try {
+    await assert.rejects(
+      () => registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }),
+      /500/,
+    );
+  } finally { failing.restore(); }
+});
+
+test('registerAllCommands warns but succeeds when the app PATCH or a guild PUT is denied', async () => {
+  const { restore } = mockFetch((method, url) => {
+    if (method === 'PATCH') return errRes(403, { message: 'Missing Access', code: 50001 });
+    if (url.includes('/guilds/')) return errRes(403, { message: 'Missing Access', code: 50001 });
+    return okJson();
+  });
+  try {
+    await registerAllCommands(apiConfig, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
+  } finally { restore(); }
+});
+
+test('scheduleCommandRegistration retries on an interval until registration succeeds', async () => {
+  let n = 0;
+  const { restore } = mockFetch((method, url) => {
+    if (url.endsWith('/commands')) {
+      n += 1;
+      if (n < 3) return errRes(500, { message: 'boom' });
+    }
+    return okJson();
+  });
+  try {
+    const stop = scheduleCommandRegistration(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }, { intervalMs: 5 });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+  } finally { restore(); }
   assert.ok(n >= 3, `expected at least 3 attempts, got ${n}`);
-  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // final successful set
-});
-
-test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {
-  const { client } = mockClient({ failAppEdit: true, failGuild: true });
-  await registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
-  const noGuild = mockClient({ failGuild: true });
-  await registerAllCommands(noGuild.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
 });
