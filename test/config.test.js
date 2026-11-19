@@ -25,6 +25,7 @@ test('loads defaults (no public key or gateway env vars needed)', () => {
   assert.equal(config.hintsEnabled, true);
   assert.equal(config.publicHost, 'localhost');
   assert.equal(config.maxAttachmentBytes, 25 * 1024 * 1024);
+  assert.equal(config.watchIntervalMs, 30000);
 });
 
 test('env overrides are applied', () => {

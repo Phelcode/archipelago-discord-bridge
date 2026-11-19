@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends } from '../src/ap/manager.js';
 
 test('resolveSeed passes through an explicit seed', () => {
   assert.equal(resolveSeed(12345), 12345);
@@ -47,4 +47,19 @@ test('apworlds are stored globally and installed into every game', () => {
   installApworlds(config, { name: 'other' });
   assert.deepEqual(fs.readdirSync(path.join(dataDir, 'xdg', 'other', 'Archipelago', 'worlds')).sort(), ['cool.apworld', 'evil.apworld']);
   assert.deepEqual(fs.readdirSync(path.join(apDir, 'custom_worlds')).sort(), ['cool.apworld', 'evil.apworld']);
+});
+
+test('parseItemSends extracts timestamped item sends from a MultiServer log', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-log-'));
+  const log = path.join(dir, 'server.log');
+  fs.writeFileSync(log, [
+    '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Alice sent Map Bombs to Bob (Tile 3)',
+    '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 1)',
+    '[MultiServer at 2026-01-02 03:06:00,000]: some other log line',
+  ].join('\n') + '\n');
+  const sends = parseItemSends(log);
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[0], { at: '2026-01-02 03:04:05,678', sender: 'Alice', item: 'Map Bombs', receiver: 'Bob', location: 'Tile 3' });
+  assert.deepEqual(sends[1], { at: '2026-01-02 03:05:00,000', sender: 'Bob', item: 'Progressive Sword', receiver: 'Alice', location: 'Tile 1' });
+  assert.deepEqual(parseItemSends(path.join(dir, 'missing.log')), []);
 });

@@ -42,7 +42,7 @@ async def recv_until(ws, wanted, timeout):
     return found
 
 
-async def connect_slot(uri, password, version, name, game, timeout):
+async def connect_slot(uri, password, version, name, game, timeout, want_items=False):
     ws = await websockets.connect(uri)
     try:
         room_raw = await asyncio.wait_for(ws.recv(), timeout)
@@ -59,7 +59,18 @@ async def connect_slot(uri, password, version, name, game, timeout):
             "slot_data": False,
         }]))
         msgs = await recv_until(ws, {"Connected"}, timeout)
-        return ws, room, msgs["Connected"]
+        conn = msgs["Connected"]
+        if want_items:
+            # The server sends ReceivedItems on Connect/Sync only when the slot
+            # has items; a short timeout means "no items".
+            conn["_received_items"] = []
+            await ws.send(json.dumps([{"cmd": "Sync"}]))
+            try:
+                items_msgs = await recv_until(ws, {"ReceivedItems"}, min(timeout, 5.0))
+                conn["_received_items"] = items_msgs["ReceivedItems"].get("items", [])
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+        return ws, room, conn
     except Exception:
         await ws.close()
         raise
@@ -68,12 +79,14 @@ async def connect_slot(uri, password, version, name, game, timeout):
 async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
     if not known_slots:
         raise RuntimeError("no known slot names supplied (--slots)")
-    ws, room, conn = await connect_slot(uri, password, version, known_slots[0], "", timeout)
+    want_items = mode == "received"
+    ws, room, conn = await connect_slot(uri, password, version, known_slots[0], "", timeout, want_items)
     try:
         slot_info = {int(k): v for k, v in conn["slot_info"].items()}
         player_slots = {s: info for s, info in slot_info.items() if info.get("type") == 1}
         if not player_slots:
             raise RuntimeError("server reports no player slots")
+        slot_name_by_id = {s: info.get("name", str(s)) for s, info in slot_info.items()}
 
         games = room.get("games", [])
         results = {}
@@ -82,7 +95,7 @@ async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
             if slot == conn["slot"]:
                 slot_ws, connected = ws, conn
             else:
-                slot_ws, _, connected = await connect_slot(uri, password, version, info["name"], "", timeout)
+                slot_ws, _, connected = await connect_slot(uri, password, version, info["name"], "", timeout, want_items)
             try:
                 await slot_ws.send(json.dumps([{"cmd": "GetDataPackage", "games": games}]))
                 await slot_ws.send(json.dumps([{"cmd": "Get", "keys": [
@@ -101,6 +114,7 @@ async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
                     "hint_points": connected.get("hint_points", 0),
                     "status": retrieved.get(f"_read_client_status_0_{slot}", 0),
                     "hints": retrieved.get(f"_read_hints_0_{slot}", []),
+                    "received": connected.get("_received_items", []),
                 }
             finally:
                 if slot_ws is not ws:
@@ -166,6 +180,19 @@ async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
         if want_slot is None:
             raise RuntimeError("--slot is required in hints mode")
         out["hints"] = {want_slot: out["hints"].get(want_slot, [])}
+    if mode == "received":
+        out["received"] = {}
+        for slot, r in sorted(results.items()):
+            game = r["game"]
+            out["received"][slot] = [{
+                "item_id": it.get("item"),
+                "item": item_name(game, it.get("item")),
+                "location_id": it.get("location"),
+                "location": loc_name(game, it.get("location")),
+                "sender_slot": it.get("player"),
+                "sender_name": slot_name_by_id.get(it.get("player"), str(it.get("player"))),
+                "flags": it.get("flags", 0),
+            } for it in r["received"]]
     return out
 
 
@@ -175,7 +202,7 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--password", default=None)
     parser.add_argument("--slots", default="", help="comma-separated known slot names")
-    parser.add_argument("--mode", choices=["stats", "hints"], default="stats")
+    parser.add_argument("--mode", choices=["stats", "hints", "received"], default="stats")
     parser.add_argument("--slot", type=int, default=None)
     parser.add_argument("--ap-version", default="0.6.9")
     parser.add_argument("--timeout", type=float, default=20.0)

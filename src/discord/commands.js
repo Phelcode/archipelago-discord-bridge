@@ -67,6 +67,22 @@ export const COMMAND_DEFINITIONS = [
   { name: 'game-stats', description: 'Gamewide stats: total checks, found, hints, seed', options: [gameOption(false)] },
   { name: 'hints', description: 'Show your hints (if hints are enabled)', options: [gameOption(false)] },
   {
+    name: 'received',
+    description: 'Items sent to you in a game (what was unlocked for you, by whom, when)',
+    options: [
+      gameOption(false),
+      {
+        name: 'scope', description: 'Which items to show', type: STRING, required: false,
+        choices: [
+          { name: 'new — since you last ran /received (default)', value: 'new' },
+          { name: 'all — everything received so far', value: 'all' },
+        ],
+      },
+    ],
+  },
+  { name: 'block', description: 'Mark yourself blocked — you get a DM when someone sends you an item' },
+  { name: 'unblock', description: 'Mark yourself unblocked (default; no DMs for incoming items)' },
+  {
     name: 'role',
     description: '[owner] Manage roles',
     options: [
@@ -150,9 +166,12 @@ export const PERMISSIONS = {
   stats: 'all',
   'game-stats': 'all',
   hints: 'all',
+  received: 'all',
+  block: 'all',
+  unblock: 'all',
 };
 
-export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 'hints', 'role']);
+export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 'hints', 'role', 'received', 'block', 'unblock']);
 
 // Modals (components v2: File Upload type 19 / Text Input type 4 inside a Label).
 export const MODAL_REGISTER = 'bridge_register';
@@ -231,6 +250,9 @@ const COMMAND_SUMMARIES = {
   stats: 'Per-player checks found/total and completion status',
   'game-stats': 'Gamewide totals: checks, hints, seed',
   hints: 'Your hints (if hints are enabled)',
+  received: 'Items sent to you (what/who/when) — new since last check by default, scope: all for the full list',
+  block: 'Mark yourself blocked — get a DM when someone sends you an item',
+  unblock: 'Mark yourself unblocked (default)',
   role: '[owner] Assign or remove host roles',
 };
 
@@ -451,6 +473,7 @@ const handlers = {
   async profile(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
     const player = ctx.db.getPlayer(ctx.userId);
+    const blocked = Boolean(ctx.db.getPreference(ctx.userId).blocked);
     const responses = ctx.options.responses;
     let confirmation = null;
     if (responses !== undefined && responses !== null) {
@@ -467,8 +490,56 @@ const handlers = {
       player ? `Registered as player: **${player.slot}** (${player.game})` : 'Not registered as a player — use /register',
       `Replies to your commands: **${current}**`,
       'Change it with `/profile responses: private` or `/profile responses: public`.',
+      `Blocked (DM when someone sends you an item): **${blocked ? 'yes' : 'no (default)'}** — change with /block or /unblock`,
       confirmation,
     ].filter(Boolean).join('\n');
+  },
+
+  async block(ctx) {
+    ctx.db.setPreference(ctx.userId, 'blocked', true);
+    return '✅ You are now marked **blocked**: while blocked, you get a DM whenever someone sends you an item. `/unblock` to turn it off.';
+  },
+
+  async unblock(ctx) {
+    ctx.db.setPreference(ctx.userId, 'blocked', false);
+    return '✅ You are now **unblocked** (the default): no DMs for incoming items.';
+  },
+
+  async received(ctx) {
+    const player = ctx.db.getPlayer(ctx.userId);
+    if (!player) throw new UserError('You must /register first.');
+    const game = resolveGame(ctx, ctx.options.game);
+    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
+    const probeResult = await ctx.ap.probe(ctx.config, game, 'received', null, 30000, gamePlayerSlots(ctx.db, game));
+    const me = probeResult.players.find((p) => p.name === player.slot);
+    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running game.`);
+    const all = probeResult.received?.[me.slot] || [];
+    const prefs = ctx.db.getPreference(ctx.userId);
+    const seen = prefs.lastReceivedIndex?.[game.name] || 0;
+    const scope = ctx.options.scope || 'new';
+    const items = scope === 'all' ? all : all.slice(seen);
+    ctx.db.setPreference(ctx.userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [game.name]: all.length });
+    if (!items.length) {
+      return scope === 'all'
+        ? `You have not received any items yet in **${game.name}**.`
+        : `Nothing new since your last /received in **${game.name}** (${all.length} received in total — /received scope: all for the full list).`;
+    }
+    // "when" comes from the server log (the wire protocol has no timestamps)
+    const sends = ctx.ap.parseItemSends(path.join(ctx.ap.gameDir(ctx.config, game), 'server.log'));
+    const timeByKey = new Map();
+    for (const s of sends) {
+      if (s.receiver === player.slot) timeByKey.set(`${s.item}|${s.sender}`, s.at);
+    }
+    const header = scope === 'all'
+      ? `**Items received by ${player.slot}** (game ${game.name}) — full list (${all.length}):`
+      : `**Items received by ${player.slot}** (game ${game.name}) — new since last check:`;
+    const lines = [header];
+    items.forEach((it, i) => {
+      const idx = (scope === 'all' ? i : seen + i) + 1;
+      const when = timeByKey.get(`${it.item}|${it.sender_name}`) || 'time not in server log';
+      lines.push(`• #${idx} **${it.item}** from **${it.sender_name}** (found at ${it.location}) — ${when}`);
+    });
+    return lines.join('\n');
   },
 
   async join(ctx) {

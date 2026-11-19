@@ -21,5 +21,6 @@ export function loadConfig(env = process.env) {
     basePort: Number(env.BASE_PORT || 38281),
     publicHost: env.AP_SERVER_HOST || 'localhost',
     maxAttachmentBytes: Number(env.MAX_ATTACHMENT_MB || 25) * 1024 * 1024,
+    watchIntervalMs: Number(env.WATCH_INTERVAL_MS || 30000),
   };
 }

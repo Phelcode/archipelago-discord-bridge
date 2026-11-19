@@ -327,6 +327,67 @@ test('delete-game on an unknown game fails clearly', async () => {
   await assert.rejects(() => handleCommand('delete-game', ctx), /Unknown game/);
 });
 
+test('received shows new items by default (what/who/when) and the full list with scope: all', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'] });
+  const receivedData = {
+    2: [
+      { item_id: 1, item: 'Map Bombs', location_id: 3, location: 'Tile 3', sender_slot: 1, sender_name: 'Bob', flags: 1 },
+      { item_id: 2, item: 'Progressive Sword', location_id: 4, location: 'Tile 4', sender_slot: 1, sender_name: 'Bob', flags: 0 },
+    ],
+  };
+  ctx.ap = {
+    ...realAp,
+    async probe() {
+      return { room: {}, players: [{ slot: 2, name: 'Alice', game: 'ChecksFinder', checked: [], missing_count: 0, total: 25, hint_points: 0, status: 20 }], received: receivedData };
+    },
+    parseItemSends() {
+      return [{ at: '2026-01-02 03:04:05,678', sender: 'Bob', item: 'Map Bombs', receiver: 'Alice', location: 'Tile 3' }];
+    },
+  };
+  ctx.options = { game: 'g' };
+  let out = await handleCommand('received', ctx);
+  assert.match(out, /Map Bombs/);
+  assert.match(out, /Progressive Sword/);
+  assert.match(out, /from \*\*Bob\*\*/); // by who
+  assert.match(out, /2026-01-02 03:04:05,678/); // when, from the server log
+  assert.match(out, /time not in server log/); // item missing from log
+  assert.equal(ctx.db.getPreference('user-1').lastReceivedIndex.g, 2);
+
+  out = await handleCommand('received', ctx); // nothing new since last check
+  assert.match(out, /Nothing new/);
+
+  ctx.options = { game: 'g', scope: 'all' };
+  out = await handleCommand('received', ctx);
+  assert.match(out, /full list \(2\)/);
+  assert.match(out, /Map Bombs/);
+
+  // requires registration
+  await assert.rejects(
+    () => handleCommand('received', makeCtx({ userId: 'user-2', db: ctx.db, config: ctx.config, options: { game: 'g' } })),
+    /register/,
+  );
+  // requires a running game
+  ctx.db.getGame('g').status = 'stopped';
+  ctx.db.setGame('g', ctx.db.getGame('g'));
+  await assert.rejects(() => handleCommand('received', ctx), /not running/);
+});
+
+test('block/unblock toggle the blocked preference and profile shows it', async () => {
+  const ctx = makeCtx();
+  let out = await handleCommand('profile', ctx);
+  assert.match(out, /Blocked \(DM when someone sends you an item\): \*\*no \(default\)\*\*/);
+  out = await handleCommand('block', ctx);
+  assert.match(out, /blocked/);
+  assert.equal(ctx.db.getPreference('user-1').blocked, true);
+  out = await handleCommand('profile', ctx);
+  assert.match(out, /Blocked.*\*\*yes\*\*/);
+  out = await handleCommand('unblock', ctx);
+  assert.match(out, /unblocked/);
+  assert.equal(ctx.db.getPreference('user-1').blocked, false);
+});
+
 test('role add/remove/list manage hosts', async () => {
   const ctx = makeCtx({ userId: 'owner-1' });
   ctx.subcommand = 'add';

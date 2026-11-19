@@ -15,7 +15,7 @@ Roles are assigned by Discord ID:
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
 | **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/start`, `/stop`, `/delete-game` |
-| **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/stats`, `/game-stats` |
+| **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/game-stats` |
 | **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/game-stats`, `/players` |
 
 ## How it works
@@ -31,6 +31,7 @@ Roles are assigned by Discord ID:
   `<AP_DIR>/custom_worlds` (where Archipelago looks when its install dir is
   writable, as in this container) and into the per-game XDG `Archipelago/worlds`
   fallback, so every game can use them.
+- A watcher (`src/watcher.js`) polls running games every `WATCH_INTERVAL_MS` and DMs players who ran `/block` when new items are sent to them; it also tracks each player's last-seen item index for `/received scope: new`.
 - `/start` runs Archipelago's `Generate.py` first if the game hasn't been
   generated yet (seed from the `/setup-game` form, random if empty), producing a
   `.archipelago` multidata archive, then launches `MultiServer.py` for it;
@@ -119,6 +120,8 @@ Roles are assigned by Discord ID:
 - `/stats [game:]` — everyone: checks per player (`found/total`, %, status, hint points)
 - `/game-stats [game:]` — everyone: gamewide totals, hints, seed
 - `/hints [game:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
+- `/received [game:] [scope:]` — players: items sent to you (what was unlocked for you, by whom, when). Default `scope: new` shows only items since you last ran it; `scope: all` shows the full list. "When" is read from the server log
+- `/block` / `/unblock` — mark yourself blocked (default unblocked). While blocked, a background watcher DMs you whenever someone sends you an item in a running game (polls every `WATCH_INTERVAL_MS`, default 30s)
 - `/role add|remove|list` — owner: manage host roles
 
 Typical flow: owner runs `/role add host @someone` → host runs `/setup-game`

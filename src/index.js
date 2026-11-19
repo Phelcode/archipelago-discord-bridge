@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { Store } from './store.js';
 import { createDiscordClient } from './discord/client.js';
 import { registerAllCommands, COMMAND_DEFINITIONS } from './discord/commands.js';
+import { startWatcher } from './watcher.js';
 import * as ap from './ap/manager.js';
 
 function createHealthServer(config) {
@@ -80,6 +81,8 @@ async function main() {
   });
   createHealthServer(config);
   await client.login(config.discordToken);
+  startWatcher(config, db, ap, (userId, text) => client.users.send(userId, text), config.watchIntervalMs);
+  console.log(`[watch] polling running games every ${config.watchIntervalMs}ms for blocked-player item DMs`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
