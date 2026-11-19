@@ -11,7 +11,7 @@ export async function downloadAttachment(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-// discord.js v14: use flags instead of the deprecated `ephemeral` option.
+// Ephemeral replies are set via flags.
 const ephemeralOpts = (ephemeral) => (ephemeral ? { flags: MessageFlags.Ephemeral } : {});
 
 export function chunkContent(text, max = 1900) {

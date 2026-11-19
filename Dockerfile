@@ -1,5 +1,5 @@
-# Trixie (Debian 13) ships Python 3.13: Archipelago requires Python
-# 3.12.0-3.13.x and rejects bookworm's 3.11 at import time (ModuleUpdate).
+# Trixie (Debian 13) ships Python 3.13. Archipelago requires Python
+# 3.12.0-3.13.x (ModuleUpdate rejects other versions at import time).
 FROM node:22-trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive

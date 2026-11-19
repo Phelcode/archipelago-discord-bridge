@@ -16,7 +16,8 @@ const gameOption = (required) => ({
 });
 
 export const COMMAND_DEFINITIONS = [
-  { name: 'help', description: 'Show the commands available to your role' },
+  { name: 'commands', description: 'List all commands with a one-line summary' },
+  { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
   { name: 'register', description: 'Register as a player (opens an upload form for your player yaml)', options: [] },
   { name: 'unregister', description: 'Remove your player registration' },
   {
@@ -112,9 +113,8 @@ export async function registerAllCommands(client, { guildId, definitions }) {
   } catch (err) {
     console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
-  // Clear previously registered commands (global and guild) before re-adding
-  // the current set, so removed/renamed commands don't linger and nothing is
-  // registered twice.
+  // Clear existing global and guild commands, then re-add the current set
+  // (avoids duplicates and stale entries).
   await client.application.commands.set([]);
   if (guildId) {
     try {
@@ -132,6 +132,7 @@ export async function registerAllCommands(client, { guildId, definitions }) {
 }
 
 export const PERMISSIONS = {
+  commands: 'all',
   help: 'all',
   register: 'all',
   unregister: 'all',
@@ -212,6 +213,27 @@ export const ALWAYS_MODAL = {
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
 
+const COMMAND_SUMMARIES = {
+  commands: 'List all commands with a one-line summary',
+  help: 'Step-by-step intro for your role',
+  register: 'Register as a player (upload your .yaml in the form)',
+  unregister: 'Remove your player registration',
+  profile: 'Your role/registration; set private or public replies',
+  join: 'Join a game session with your registered yaml',
+  leave: 'Leave a game session',
+  players: 'List registered players, or players of one game',
+  'setup-game': '[host] Create a game session (opens a form)',
+  'upload-apworld': '[host] Upload a .apworld (usable in every game; opens a form)',
+  start: '[host] Generate the multiworld if needed, then start the server',
+  stop: '[host] Stop the server',
+  'delete-game': '[host] Delete a game session and its files',
+  status: 'Game sessions and server status (active by default; scope: finished|all)',
+  stats: 'Per-player checks found/total and completion status',
+  'game-stats': 'Gamewide totals: checks, hints, seed',
+  hints: 'Your hints (if hints are enabled)',
+  role: '[owner] Assign or remove host roles',
+};
+
 // "Active" games are started (running) or waiting to be started (set up /
 // generating / generated). "Finished" games are stopped.
 const ACTIVE_STATUSES = new Set(['setup', 'generating', 'generated', 'running']);
@@ -247,12 +269,10 @@ function resolveGame(ctx, name) {
   return games[games.length - 1];
 }
 
-// Generates the multiworld if the game doesn't have one yet (used by /start,
-// so hosts don't need a separate /generate step). Returns the generation
-// result when a generation ran, null when an existing one was reused.
+// Generates the multiworld if the game doesn't have one yet (called by
+// /start). Returns the generation result when a generation ran, null when an
+// existing multiworld was reused (kept across restarts, so the seed is stable).
 async function ensureGenerated(ctx, game) {
-  // Reuse an existing multiworld (also across container restarts, where the
-  // boot step marks games 'stopped') so the seed doesn't silently change.
   if (game.multidata && fs.existsSync(game.multidata)) return null;
   let seed = game.requestedSeed;
   if (seed !== undefined && seed !== null && String(seed).trim() !== '') {
@@ -367,12 +387,42 @@ function formatGameStats(game, probeResult) {
 }
 
 const handlers = {
+  async commands(ctx) {
+    const lines = ['**Commands**'];
+    for (const def of COMMAND_DEFINITIONS) {
+      lines.push(`• \`/${def.name}\` — ${COMMAND_SUMMARIES[def.name] || def.description}`);
+    }
+    return lines.join('\n');
+  },
+
   async help(ctx) {
     const role = roleOf(ctx.db, ctx.config, ctx.userId);
-    const lines = [`**Your role: ${role}**`, '', '**Commands**', '• /help — this list', '• /register — upload your player yaml via the form (anyone)', '• /unregister, /profile, /join, /leave, /players', '• /status [scope:], /stats, /game-stats — everyone (spectator view)'];
-    if (role === 'player' || role === 'host' || role === 'owner') lines.push('• /hints — your hints for the running game');
-    if (canHost(ctx.db, ctx.config, ctx.userId)) lines.push('• /setup-game, /upload-apworld — host commands (open forms)', '• /start, /stop, /delete-game — host: run and remove game sessions (/start generates the multiworld if needed)');
-    if (isOwner(ctx.config, ctx.userId)) lines.push('• /role add|remove|list — owner only');
+    const lines = [`**Getting started — your role: ${role}**`, ''];
+    if (isOwner(ctx.config, ctx.userId)) {
+      lines.push('You are the owner: `/role add host @user` makes someone a host.', '');
+    }
+    if (canHost(ctx.db, ctx.config, ctx.userId)) {
+      lines.push(
+        '**Hosting a game**',
+        '1. `/setup-game` — create the session (form: name, optional password, optional seed)',
+        '2. Players `/register` (upload their yaml) and `/join game: <name>`',
+        '3. Optional: `/upload-apworld` — add a custom game (.apworld, usable in every game)',
+        '4. `/start game: <name>` — generates the multiworld and starts the server',
+        '5. `/stop game:` stops it, `/delete-game game:` removes it',
+      );
+    } else if (ctx.db.getPlayer(ctx.userId)) {
+      lines.push(
+        '**Playing**',
+        '1. `/join game: <name>` — join a session (you are registered)',
+        '2. `/stats`, `/game-stats` — watch progress; `/hints` — your hints',
+      );
+    } else {
+      lines.push(
+        '**Spectating** — `/status`, `/stats`, `/game-stats`, `/players` work for everyone.',
+        'To play: `/register` (upload your player yaml in the form), then `/join game: <name>`.',
+      );
+    }
+    lines.push('', '`/commands` lists everything; `/profile` sets private vs public replies.');
     return lines.join('\n');
   },
 

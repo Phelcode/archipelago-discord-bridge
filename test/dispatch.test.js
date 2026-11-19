@@ -132,11 +132,12 @@ test('always-modal commands open a modal instead of replying', async () => {
 
 test('regular commands defer then edit the reply with the result', async () => {
   const { dispatch } = setup();
-  const { interaction, calls } = chat('help');
+  const { interaction, calls } = chat('commands');
   await dispatch(interaction);
   assert.deepEqual(calls.deferReply, [{}]);
   assert.equal(calls.editReply.length, 1);
-  assert.match(calls.editReply[0], /\/help/);
+  assert.match(calls.editReply[0], /\*\*Commands\*\*/);
+  assert.match(calls.editReply[0], /\/register/);
 });
 
 test('private-responses preference makes every reply ephemeral', async () => {

@@ -97,16 +97,16 @@ Roles are assigned by Discord ID:
    boot (`AP_UPDATE=false` keeps the existing copy; `AP_REPO_URL`/`AP_BRANCH`
    override the source). The image bakes in only Archipelago's *Python
    dependencies* (`docker/requirements-ap.txt`) in a venv at `/opt/ap-venv`.
-   The base image is `node:22-trixie-slim` (Debian 13, Python 3.13) because
-   Archipelago requires Python 3.12–3.13 and rejects bookworm's Python 3.11.
-   After pulling this change, **rebuild** the image (`docker compose up -d --build`) —
-   the self-update only syncs app code, not the base image or the venv. The
-   Dockerfile fails the build if the venv Python is outside 3.12–3.13, and the
-   entrypoint logs a clear warning on boot if AP can't be imported.
+   The base image is `node:22-trixie-slim` (Debian 13, Python 3.13); Archipelago
+   requires Python 3.12–3.13. The self-update only syncs app code, not the base
+   image or the venv — rebuild with `docker compose up -d --build` after changing
+   the image. The Dockerfile fails the build if the venv Python is outside
+   3.12–3.13, and the entrypoint logs a warning on boot if AP can't be imported.
 
 ## Commands
 
-- `/help` — commands available to your role
+- `/commands` — every command on its own line with a one-line summary
+- `/help` — short step-by-step intro for your role: hosts get create/host a game (incl. `/upload-apworld`), players get register (upload yaml) + join, spectators get what they can view
 - `/register` — register as a player (always opens a modal with a file-upload field for your player `.yaml` + optional slot-name field)
 - `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
@@ -135,7 +135,7 @@ self-update settings, and Archipelago source settings.
 ## Development / branch workflow
 
 - `main` is the stable, released state. All work-in-progress lands on the **`dev`
-  branch** (one branch, no per-fix branches).
+  branch**.
 - To test a WIP build with the self-updating container, point it at `dev` in
   `.env`: `REPO_BRANCH=dev` (the entrypoint pulls that branch on boot). Once
   `dev` is verified, merge it to `main` and set `REPO_BRANCH=main` (default).

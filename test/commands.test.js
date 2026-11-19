@@ -43,15 +43,42 @@ function makeCtx(overrides = {}) {
   };
 }
 
-test('help lists role-appropriate commands', async () => {
-  const ctx = makeCtx({ userId: 'owner-1' });
-  const out = await handleCommand('help', ctx);
-  assert.match(out, /owner/);
-  assert.match(out, /\/role/);
-  assert.match(out, /\/delete-game/);
+test('commands lists every command on its own line with a summary', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('commands', ctx);
+  for (const def of COMMAND_DEFINITIONS) {
+    assert.ok(out.includes(`• \`/${def.name}\` — `), `missing line for /${def.name}`);
+  }
+  assert.match(out, /\/setup-game` — \[host\]/);
+});
+
+test('help walks each role through their own steps', async () => {
+  const owner = await handleCommand('help', makeCtx({ userId: 'owner-1' }));
+  assert.match(owner, /role: owner/);
+  assert.match(owner, /\/role add host/);
+  assert.match(owner, /\/setup-game/);
+  assert.match(owner, /\/start game:/);
+
+  const hostCtx = makeCtx({ userId: 'host-1' });
+  hostCtx.db.addHost('host-1');
+  const host = await handleCommand('help', hostCtx);
+  assert.match(host, /role: host/);
+  assert.match(host, /Hosting a game/);
+  assert.match(host, /\/upload-apworld/);
+  assert.doesNotMatch(host, /\/role add/);
+
+  const playerCtx = makeCtx({ userId: 'user-1' });
+  playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const player = await handleCommand('help', playerCtx);
+  assert.match(player, /role: player/);
+  assert.match(player, /\/join game:/);
+  assert.match(player, /\/hints/);
+
   const spectator = await handleCommand('help', makeCtx({ userId: 'nobody' }));
-  assert.match(spectator, /spectator/);
-  assert.doesNotMatch(spectator, /\/setup-game/);
+  assert.match(spectator, /role: spectator/);
+  assert.match(spectator, /Spectating/);
+  assert.match(spectator, /\/register/);
+  assert.match(spectator, /\/commands/);
 });
 
 test('register validates and stores the player yaml', async () => {
@@ -381,9 +408,11 @@ test('modal builders produce file-upload (type 19) and text (type 4) components 
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
 });
 
-test('profile replaces the built-in /me name', () => {
+test('command names avoid the built-in /me and include commands + help', () => {
   const names = COMMAND_DEFINITIONS.map((d) => d.name);
   assert.ok(names.includes('profile'));
+  assert.ok(names.includes('commands'));
+  assert.ok(names.includes('help'));
   assert.ok(!names.includes('me'));
   assert.ok(!names.includes('whoami'));
 });
