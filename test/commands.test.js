@@ -604,50 +604,69 @@ function mockFetch(handler) {
 
 const okJson = (data = []) => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const errRes = (status, data = { message: 'err' }) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+const isGlobalCommands = (url) => url.endsWith('/applications/app-1/commands');
+const isGuildCommands = (url) => url.includes('/guilds/');
 
-test('registerAllCommands sets integration types, registers global commands, then per-guild commands', async () => {
-  const { calls, restore } = mockFetch(() => okJson());
+test('registerAllCommands sets integration types, then PUTs global and per-guild commands when they differ', async () => {
+  const { calls, restore } = mockFetch(() => okJson([])); // GET returns empty -> differs -> PUT
   try {
     await registerAllCommands(apiConfig, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
   } finally { restore(); }
   assert.equal(calls[0][0], 'PATCH');
   assert.match(calls[0][1], /\/applications\/@me$/);
   assert.deepEqual(calls[0][2], { integration_types: [0, 1] });
-  // one atomic PUT for global commands (full server-side replace, no clear gap)
-  assert.equal(calls[1][0], 'PUT');
-  assert.match(calls[1][1], /\/applications\/app-1\/commands$/);
-  assert.equal(calls[1][2][0].integration_types[1], 1);
-  assert.deepEqual(calls[1][2][0].contexts, [0, 1, 2]);
-  assert.equal(calls.filter((c) => c[1].endsWith('/applications/app-1/commands')).length, 1);
-  assert.match(calls[2][1], /\/guilds\/g1\/commands$/);
-  assert.deepEqual(calls[2][2][0].integration_types, [0]);
-  assert.match(calls[3][1], /\/guilds\/g2\/commands$/);
+  // GET current global commands, then one atomic PUT (full server-side replace)
+  assert.equal(calls[1][0], 'GET');
+  assert.ok(isGlobalCommands(calls[1][1]));
+  assert.equal(calls[2][0], 'PUT');
+  assert.ok(isGlobalCommands(calls[2][1]));
+  assert.equal(calls[2][2][0].integration_types[1], 1);
+  assert.deepEqual(calls[2][2][0].contexts, [0, 1, 2]);
+  assert.equal(calls.filter((c) => c[0] === 'PUT' && isGlobalCommands(c[1])).length, 1);
+  assert.ok(calls.some((c) => c[0] === 'PUT' && c[1].includes('/guilds/g1/commands') && c[2][0].integration_types[0] === 0));
+  assert.ok(calls.some((c) => c[0] === 'PUT' && c[1].includes('/guilds/g2/commands')));
 });
 
-test('registerAllCommands without guild ids only touches the application and global commands', async () => {
-  const { calls, restore } = mockFetch(() => okJson());
-  try {
-    await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
-  } finally { restore(); }
-  assert.equal(calls.length, 2);
-  assert.ok(calls.every((c) => !c[1].includes('/guilds/')));
-});
-
-test('registerAllCommands waits out 429s, retries a failed global PUT once, then throws if still failing', async () => {
-  let n = 0;
+test('registerAllCommands skips the PUT when the registered commands already match', async () => {
+  const existing = globalCommandPayload(COMMAND_DEFINITIONS).map((d, i) => ({
+    id: String(1000 + i), application_id: 'app-1', version: 5, type: 1,
+    default_member_permissions: null, dm_permission: true, ...d,
+  }));
   const { calls, restore } = mockFetch((method, url) => {
-    if (url.endsWith('/commands')) {
-      n += 1;
-      if (n === 1) return errRes(500, { message: 'boom' });
-      if (n === 2) return errRes(429, { retry_after: 0.01 });
-    }
-    return okJson();
+    if (method === 'GET' && isGlobalCommands(url)) return okJson(existing);
+    return okJson([]);
   });
   try {
     await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
   } finally { restore(); }
-  assert.equal(n, 3); // 500 -> internal retry -> 429 (waited) -> success
-  assert.equal(calls.filter((c) => c[0] === 'PUT' && c[1].endsWith('/commands')).length, 3);
+  assert.equal(calls.filter((c) => c[0] === 'PUT').length, 0, 'no PUT when commands are unchanged');
+  assert.equal(calls.filter((c) => c[0] === 'GET' && isGlobalCommands(c[1])).length, 1);
+});
+
+test('registerAllCommands without guild ids only touches the application and global commands', async () => {
+  const { calls, restore } = mockFetch(() => okJson([]));
+  try {
+    await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  } finally { restore(); }
+  assert.equal(calls.filter((c) => isGuildCommands(c[1])).length, 0);
+  assert.equal(calls.filter((c) => c[0] === 'PUT' && isGlobalCommands(c[1])).length, 1);
+});
+
+test('registerAllCommands waits out short 429s, retries a failed global PUT once, then throws if still failing', async () => {
+  let n = 0;
+  const { calls, restore } = mockFetch((method, url) => {
+    if (method === 'PUT' && isGlobalCommands(url)) {
+      n += 1;
+      if (n === 1) return errRes(500, { message: 'boom' });
+      if (n === 2) return errRes(429, { retry_after: 0.01 });
+    }
+    return okJson([]);
+  });
+  try {
+    await registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  } finally { restore(); }
+  assert.equal(n, 3); // 500 -> internal retry -> 429 (waited inline) -> success
+  assert.equal(calls.filter((c) => c[0] === 'PUT' && isGlobalCommands(c[1])).length, 3);
 
   const failing = mockFetch(() => errRes(500, { message: 'nope' }));
   try {
@@ -658,11 +677,24 @@ test('registerAllCommands waits out 429s, retries a failed global PUT once, then
   } finally { failing.restore(); }
 });
 
+test('a long 429 on the global PUT throws RateLimitError for the scheduler instead of blocking', async () => {
+  const { restore } = mockFetch((method, url) => {
+    if (method === 'PUT' && isGlobalCommands(url)) return errRes(429, { retry_after: 432 });
+    return okJson([]);
+  });
+  try {
+    await assert.rejects(
+      () => registerAllCommands(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }),
+      /rate limited, retry_after 432s/,
+    );
+  } finally { restore(); }
+});
+
 test('registerAllCommands warns but succeeds when the app PATCH or a guild PUT is denied', async () => {
   const { restore } = mockFetch((method, url) => {
     if (method === 'PATCH') return errRes(403, { message: 'Missing Access', code: 50001 });
-    if (url.includes('/guilds/')) return errRes(403, { message: 'Missing Access', code: 50001 });
-    return okJson();
+    if (isGuildCommands(url)) return errRes(403, { message: 'Missing Access', code: 50001 });
+    return okJson([]);
   });
   try {
     await registerAllCommands(apiConfig, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
@@ -672,16 +704,16 @@ test('registerAllCommands warns but succeeds when the app PATCH or a guild PUT i
 test('scheduleCommandRegistration retries on an interval until registration succeeds', async () => {
   let n = 0;
   const { restore } = mockFetch((method, url) => {
-    if (url.endsWith('/commands')) {
+    if (method === 'PUT' && isGlobalCommands(url)) {
       n += 1;
       if (n < 3) return errRes(500, { message: 'boom' });
     }
-    return okJson();
+    return okJson([]);
   });
   try {
     const stop = scheduleCommandRegistration(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }, { intervalMs: 5 });
     await new Promise((r) => setTimeout(r, 200));
     stop();
   } finally { restore(); }
-  assert.ok(n >= 3, `expected at least 3 attempts, got ${n}`);
+  assert.ok(n >= 3, `expected at least 3 PUT attempts, got ${n}`);
 });
