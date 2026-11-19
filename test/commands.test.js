@@ -388,6 +388,22 @@ test('block/unblock toggle the blocked preference and profile shows it', async (
   assert.equal(ctx.db.getPreference('user-1').blocked, false);
 });
 
+test('players shows the blocked marker for blocked users', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setPlayer('u2', { slot: 'Bob', game: 'ChecksFinder' });
+  ctx.db.setPreference('u2', 'blocked', true);
+  let out = await handleCommand('players', ctx);
+  assert.match(out, /<@u1> — \*\*Alice\*\* \(ChecksFinder\)\n/);
+  assert.match(out, /<@u2> — \*\*Bob\*\* \(ChecksFinder\) 🔒 blocked/);
+
+  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: ['u1', 'u2'] });
+  ctx.options = { game: 'g' };
+  out = await handleCommand('players', ctx);
+  assert.match(out, /<@u1> — slot \*\*Alice\*\* \(ChecksFinder\)\n/);
+  assert.match(out, /<@u2> — slot \*\*Bob\*\* \(ChecksFinder\) 🔒 blocked/);
+});
+
 test('role add/remove/list manage hosts', async () => {
   const ctx = makeCtx({ userId: 'owner-1' });
   ctx.subcommand = 'add';

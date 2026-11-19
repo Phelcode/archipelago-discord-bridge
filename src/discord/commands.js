@@ -240,7 +240,7 @@ const COMMAND_SUMMARIES = {
   profile: 'Your role/registration; set private or public replies',
   join: 'Join a game session with your registered yaml',
   leave: 'Leave a game session',
-  players: 'List registered players, or players of one game',
+  players: 'List registered players (🔒 = blocked), or players of one game',
   'setup-game': '[host] Create a game session (opens a form)',
   'upload-apworld': '[host] Upload a .apworld (usable in every game; opens a form)',
   start: '[host] Generate the multiworld if needed, then start the server',
@@ -560,12 +560,13 @@ const handlers = {
   },
 
   async players(ctx) {
+    const blockedTag = (userId) => (ctx.db.getPreference(userId).blocked ? ' 🔒 blocked' : '');
     if (ctx.options.game) {
       const game = resolveGame(ctx, ctx.options.game);
       const lines = [`**Players in "${game.name}" (${(game.playerIds || []).length}):**`];
       for (const userId of game.playerIds || []) {
         const p = ctx.db.getPlayer(userId);
-        lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}`);
+        lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}`);
       }
       if (!lines[1]) lines.push('(none yet — players use /join)');
       return lines.join('\n');
@@ -573,7 +574,7 @@ const handlers = {
     const lines = ['**Registered players:**'];
     const entries = Object.entries(ctx.db.data.players);
     if (!entries.length) lines.push('(none yet — anyone can /register)');
-    for (const [userId, p] of entries) lines.push(`• <@${userId}> — **${p.slot}** (${p.game})`);
+    for (const [userId, p] of entries) lines.push(`• <@${userId}> — **${p.slot}** (${p.game})${blockedTag(userId)}`);
     return lines.join('\n');
   },
 
