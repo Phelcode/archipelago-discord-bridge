@@ -237,7 +237,10 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
       } catch { /* best effort */ }
       return true;
     } catch (err) {
-      console.error(`[commands] registration failed: ${err.message} (retrying in ${intervalMs}ms)`);
+      // @discordjs/rest's RateLimitError has an empty message; the useful
+      // parts are err.name (RateLimitError[<route>]) and err.retryAfter.
+      const retryAfter = err && typeof err.retryAfter === 'number' ? `, retry_after ${err.retryAfter}s` : '';
+      console.error(`[commands] registration failed: ${err?.message || err?.name || err}${retryAfter} (retrying in ${intervalMs}ms)`);
       return false;
     }
   };

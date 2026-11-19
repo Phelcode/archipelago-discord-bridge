@@ -686,3 +686,25 @@ test('scheduleCommandRegistration makes zero API calls when the persisted hash m
   stop();
   assert.equal(calls.length, 0, 'no API calls when command set is unchanged');
 });
+
+test('rate-limit failures are logged with route and retry_after (RateLimitError has empty message)', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  client.application.commands.set = async () => {
+    const err = new Error(); // @discordjs/rest RateLimitError: super() with no message
+    err.name = 'RateLimitError[/applications/app-1/commands]';
+    err.retryAfter = 7;
+    throw err;
+  };
+  const logs = [];
+  const origError = console.error;
+  console.error = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+    await new Promise((r) => setTimeout(r, 60));
+    stop();
+  } finally {
+    console.error = origError;
+  }
+  assert.ok(logs.some((l) => l.includes('RateLimitError[/applications/app-1/commands]') && l.includes('retry_after 7s')), logs.join(' | '));
+});
