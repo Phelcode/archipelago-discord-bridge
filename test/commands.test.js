@@ -607,31 +607,21 @@ function mockClient({ failGuild = false, failAppEdit = false, existingGlobal = [
   return { client, calls };
 }
 
-test('registerAllCommands sets integration types, then PUTs global and per-guild commands when they differ', async () => {
+test('registerAllCommands sets integration types, then one atomic PUT for global and each guild', async () => {
   const { client, calls } = mockClient();
   await registerAllCommands(client, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS });
   assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  assert.deepEqual(calls[1], ['fetch', 'global']);
   const globalSet = calls.find((c) => c[0] === 'set' && c[1] === 'global');
-  assert.ok(globalSet, 'global PUT happened (empty existing set differs)');
+  assert.ok(globalSet, 'global PUT happened');
   assert.equal(globalSet[2][0].integration_types[1], 1);
   assert.deepEqual(globalSet[2][0].contexts, [0, 1, 2]);
+  // one PUT per scope (full server-side replace), no GET on the rate-limited route
+  assert.equal(calls.filter((c) => c[0] === 'set').length, 3);
+  assert.equal(calls.filter((c) => c[0] === 'fetch').length, 0);
   const g1 = calls.find((c) => c[0] === 'set' && c[1] === 'guild:g1');
   const g2 = calls.find((c) => c[0] === 'set' && c[1] === 'guild:g2');
   assert.ok(g1 && g2);
   assert.deepEqual(g1[2][0].integration_types, [0]);
-});
-
-test('registerAllCommands skips the PUT when the registered commands already match', async () => {
-  const existingGlobal = new Map(globalCommandPayload(COMMAND_DEFINITIONS).map((d, i) => [String(1000 + i), {
-    id: String(1000 + i), application_id: 'app-1', version: 5, type: 1,
-    default_member_permissions: null, dm_permission: true, ...d,
-  }]));
-  const existingGuild = new Map(guildCommandPayload(COMMAND_DEFINITIONS).map((d, i) => [String(2000 + i), { id: String(2000 + i), ...d }]));
-  const { client, calls } = mockClient({ existingGlobal, existingGuilds: { g1: existingGuild } });
-  await registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS });
-  assert.equal(calls.filter((c) => c[0] === 'set').length, 0, 'no PUT when commands are unchanged');
-  assert.equal(calls.filter((c) => c[0] === 'fetch').length, 2);
 });
 
 test('registerAllCommands without guild ids only touches the application and global commands', async () => {

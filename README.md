@@ -62,9 +62,9 @@ Roles are assigned by Discord ID:
      The hash of the last successfully registered command set is persisted in
      `DATA_DIR/commands-state.json`, so steady-state boots make **no** command
      API calls at all (bulk command PUTs are heavily rate-limited); when the set
-     changes, the current set is fetched and re-PUT only if it differs, with a
-     log line per step and a 60s retry loop. 429s on application routes surface
-     immediately in the log instead of waiting silently in the REST queue.
+     changes, one atomic PUT per scope runs with a log line per step and a 60s
+     retry loop. 429s on application routes surface immediately in the log
+     (route + retry_after) instead of waiting silently in the REST queue.
    - Add the app to your server with the `bot applications.commands` scopes (the bot
      user joins; the app only answers interactions and needs no channel permissions),
      and/or to your user with `applications.commands`.

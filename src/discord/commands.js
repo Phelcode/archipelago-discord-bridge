@@ -124,42 +124,11 @@ export function guildCommandPayload(definitions) {
   return definitions.map((def) => ({ ...def, integration_types: [0], contexts: [0] }));
 }
 
-
-// (id, version, localizations, ...) that must not trigger a re-PUT.
-function canonicalOption(opt) {
-  const c = { name: opt.name, description: opt.description, type: opt.type, required: Boolean(opt.required) };
-  if (opt.choices) c.choices = opt.choices.map((ch) => ({ name: ch.name, value: ch.value }));
-  if (opt.options) c.options = opt.options.map(canonicalOption);
-  return c;
-}
-
-function canonicalCommand(def) {
-  return {
-    name: def.name,
-    description: def.description,
-    type: def.type ?? 1,
-    options: (def.options || []).map(canonicalOption),
-    integration_types: def.integration_types ?? [0],
-    contexts: def.contexts ?? [0, 1, 2],
-  };
-}
-
-function sameCommands(existing, desired) {
-  const list = existing instanceof Map ? [...existing.values()] : existing; // discord.js Collections are Maps
-  if (!Array.isArray(list) || list.length !== desired.length) return false;
-  const sort = (l) => [...l].map(canonicalCommand).sort((a, b) => a.name.localeCompare(b.name));
-  return JSON.stringify(sort(list)) === JSON.stringify(sort(desired));
-}
-
-// PUT commands replaces the whole list server-side (clears stale + registers
-// current, atomically), but bulk-overwriting application commands is heavily
-// rate-limited by Discord — so only PUT when the registered set differs.
-
-
 // Registration goes through discord.js's REST layer, which handles 429
-// cooldowns and retries itself. Bulk-overwriting application commands is
-// heavily rate-limited, so fetch the current set first and only PUT when it
-// differs. Every step is logged so a slow registration is never silent.
+// cooldowns and retries itself. PUT commands is a full server-side replace
+// (clears stale + registers current, atomically) — and the command routes are
+// heavily rate-limited, so the scheduler only calls this when the persisted
+// hash shows the command set changed. Every step is logged.
 export async function registerAllCommands(client, { guildIds = [], definitions }) {
   try {
     await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
@@ -168,32 +137,13 @@ export async function registerAllCommands(client, { guildIds = [], definitions }
     console.warn(`[commands] could not set integration_types (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
   const globalPayload = globalCommandPayload(definitions);
-  console.log(`[commands] checking/registering ${definitions.length} global commands...`);
-  let current = null;
-  try {
-    current = await client.application.commands.fetch();
-  } catch (err) {
-    console.warn(`[commands] could not read current global commands (${err.message}); re-registering`);
-  }
-  if (current && sameCommands(current, globalPayload)) {
-    console.log(`[commands] global commands already up to date (${definitions.length}), skipping PUT`);
-  } else {
-    await client.application.commands.set(globalPayload);
-    console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
-  }
+  console.log(`[commands] registering ${definitions.length} global commands...`);
+  await client.application.commands.set(globalPayload);
+  console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
   for (const guildId of guildIds) {
     try {
       const guild = await client.guilds.fetch(guildId);
-      const payload = guildCommandPayload(definitions);
-      let cur = null;
-      try {
-        cur = await guild.commands.fetch();
-      } catch { cur = null; }
-      if (cur && sameCommands(cur, payload)) {
-        console.log(`[commands] guild ${guildId} commands already up to date, skipping PUT`);
-        continue;
-      }
-      await guild.commands.set(payload);
+      await guild.commands.set(guildCommandPayload(definitions));
       console.log(`[commands] registered ${definitions.length} commands in guild ${guildId} (instant there).`);
     } catch (err) {
       console.warn(`[commands] guild registration in ${guildId} failed (${err.message}); add the app to that guild with the bot + applications.commands scopes for instant guild commands. Global commands still apply.`);
