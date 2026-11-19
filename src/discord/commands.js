@@ -155,6 +155,35 @@ export async function registerAllCommands(client, { guildIds = [], definitions, 
   }
 }
 
+// Registers commands when called (on client ready) and retries every
+// intervalMs until it succeeds, so a transient failure can't leave the app
+// without slash commands. Returns a stop function.
+export function scheduleCommandRegistration(client, opts, { intervalMs = 60000 } = {}) {
+  let stopped = false;
+  let timer = null;
+  const attempt = async () => {
+    try {
+      await registerAllCommands(client, opts);
+      return true;
+    } catch (err) {
+      console.error('Could not register slash commands with Discord:', err.message);
+      return false;
+    }
+  };
+  console.log('[commands] registering slash commands...');
+  attempt().then((ok) => {
+    if (ok || stopped) return;
+    timer = setInterval(async () => {
+      if (await attempt()) clearInterval(timer);
+    }, intervalMs);
+    if (timer.unref) timer.unref();
+  });
+  return () => {
+    stopped = true;
+    if (timer) clearInterval(timer);
+  };
+}
+
 export const PERMISSIONS = {
   commands: 'all',
   help: 'all',

@@ -5,7 +5,7 @@ import { Events } from 'discord.js';
 import { loadConfig } from './config.js';
 import { Store } from './store.js';
 import { createDiscordClient } from './discord/client.js';
-import { registerAllCommands, COMMAND_DEFINITIONS } from './discord/commands.js';
+import { scheduleCommandRegistration, COMMAND_DEFINITIONS } from './discord/commands.js';
 import { startWatcher } from './watcher.js';
 import * as ap from './ap/manager.js';
 
@@ -71,13 +71,8 @@ async function main() {
   const db = new Store(path.join(config.dataDir, 'db.json'));
   await restartRunningGames(config, db);
   const client = createDiscordClient({ config, db });
-  client.once(Events.ClientReady, async (readyClient) => {
-    try {
-      await registerAllCommands(readyClient, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });
-      console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord (guild + user install).`);
-    } catch (err) {
-      console.error('Could not register slash commands with Discord (set installation contexts and commands in the dev portal if needed):', err.message);
-    }
+  client.once(Events.ClientReady, (readyClient) => {
+    scheduleCommandRegistration(readyClient, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });
   });
   createHealthServer(config);
   await client.login(config.discordToken);

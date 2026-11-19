@@ -7,7 +7,7 @@ import { Store } from '../src/store.js';
 import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
-  registerModal, uploadApworldModal, setupGameModal,
+  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration,
   ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
 } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
@@ -643,6 +643,22 @@ test('registerAllCommands retries a failed global registration once, then throws
     () => registerAllCommands(failing.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }),
     /500/,
   );
+});
+
+test('scheduleCommandRegistration logs immediately and retries until registration succeeds', async () => {
+  const { client, calls } = mockClient();
+  let n = 0;
+  const origSet = client.application.commands.set;
+  client.application.commands.set = async (defs) => {
+    n += 1;
+    if (n < 3) throw new Error('500 transient');
+    return origSet(defs);
+  };
+  const stop = scheduleCommandRegistration(client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }, { intervalMs: 5 });
+  await new Promise((r) => setTimeout(r, 150));
+  stop();
+  assert.ok(n >= 3, `expected at least 3 attempts, got ${n}`);
+  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // final successful set
 });
 
 test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {

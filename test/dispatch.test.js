@@ -11,7 +11,7 @@ function makeConfig(overrides = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-disp-'));
   return {
     discordOwnerId: 'owner-1',
-    discordGuildId: null,
+    discordGuildIds: [],
     dataDir,
     basePort: 39000,
     publicHost: 'ap.example.com',
