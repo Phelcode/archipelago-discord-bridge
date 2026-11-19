@@ -7,7 +7,7 @@ import { Store } from '../src/store.js';
 import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
-  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration,
+  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, payloadHash,
   ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
 } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
@@ -646,7 +646,13 @@ test('registerAllCommands warns but succeeds when the app edit or a guild regist
   await registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS }); // must not throw
 });
 
+function tmpConfig() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-cmdstate-'));
+  return { dataDir, discordToken: 'tok', discordApplicationId: 'app-1' };
+}
+
 test('scheduleCommandRegistration retries on its own timer until registration succeeds', async () => {
+  const config = tmpConfig();
   const { client, calls } = mockClient();
   let n = 0;
   const origSet = client.application.commands.set;
@@ -655,9 +661,28 @@ test('scheduleCommandRegistration retries on its own timer until registration su
     if (n < 3) throw new Error('500 transient');
     return origSet(defs);
   };
-  const stop = scheduleCommandRegistration(client, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
   await new Promise((r) => setTimeout(r, 200));
   stop();
   assert.ok(n >= 3, `expected at least 3 attempts, got ${n}`);
   assert.equal(calls.filter((c) => c[0] === 'set' && c[1] === 'global').length, 1);
+  // success persisted the hash
+  const state = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'commands-state.json'), 'utf8'));
+  assert.equal(state.hash, payloadHash(COMMAND_DEFINITIONS, []));
+  assert.ok(state.lastSuccessAt);
+});
+
+test('scheduleCommandRegistration makes zero API calls when the persisted hash matches', async () => {
+  const config = tmpConfig();
+  fs.writeFileSync(path.join(config.dataDir, 'commands-state.json'), JSON.stringify({
+    hash: payloadHash(COMMAND_DEFINITIONS, []),
+    lastSuccessAt: Date.now(),
+  }));
+  const { client, calls } = mockClient();
+  client.application.commands.fetch = async () => { throw new Error('must not be called'); };
+  client.application.commands.set = async () => { throw new Error('must not be called'); };
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+  await new Promise((r) => setTimeout(r, 50));
+  stop();
+  assert.equal(calls.length, 0, 'no API calls when command set is unchanged');
 });

@@ -58,10 +58,10 @@ Roles are assigned by Discord ID:
      `DISCORD_GUILD_ID` (comma-separated for several; if set) so changes show up
      instantly there. `DISCORD_GUILD_ID` only affects where guild commands are
      registered — it does **not** restrict where the app answers; DMs and other
-     guilds work regardless. Registration compares the desired set against what
-     Discord already has and only re-PUTs when it differs (bulk-overwriting
-     application commands is heavily rate-limited), so steady-state boots do no
-     PUT at all.
+     guilds work regardless. Registration goes through discord.js's REST layer
+     (which handles 429 cooldowns/retries) and compares the desired set against
+     what Discord already has, only re-PUTting when it differs — so steady-state
+     boots do no PUT at all — with a log line per step and a 60s retry loop.
    - Add the app to your server with the `bot applications.commands` scopes (the bot
      user joins; the app only answers interactions and needs no channel permissions),
      and/or to your user with `applications.commands`.

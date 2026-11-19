@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
@@ -200,17 +201,43 @@ export async function registerAllCommands(client, { guildIds = [], definitions }
   }
 }
 
+export function payloadHash(definitions, guildIds) {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify({ global: globalCommandPayload(definitions), guild: guildCommandPayload(definitions), guildIds }))
+    .digest('hex');
+}
+
+function registrationStateFile(config) {
+  return path.join(config.dataDir, 'commands-state.json');
+}
+
 // Retries on its own unref'd timer until registration succeeds, so a failed
 // attempt never leaves the app commandless and never delays other timers.
-export function scheduleCommandRegistration(client, opts, { intervalMs = 60000 } = {}) {
+// The hash of the last successfully registered command set is persisted in
+// DATA_DIR, so steady-state boots make zero calls to the rate-limited
+// command routes (every call there can extend Discord's cooldown window).
+export function scheduleCommandRegistration(client, config, opts, { intervalMs = 60000 } = {}) {
+  const hash = payloadHash(opts.definitions, opts.guildIds || []);
+  let state = {};
+  try {
+    state = JSON.parse(fs.readFileSync(registrationStateFile(config), 'utf8'));
+  } catch { /* no state yet */ }
+  if (state.hash === hash && state.lastSuccessAt) {
+    console.log('[commands] command set unchanged since last successful registration; no API calls made');
+    return () => {};
+  }
   let stopped = false;
   let timer = null;
   const attempt = async () => {
     try {
       await registerAllCommands(client, opts);
+      try {
+        fs.mkdirSync(config.dataDir, { recursive: true });
+        fs.writeFileSync(registrationStateFile(config), JSON.stringify({ hash, lastSuccessAt: Date.now() }));
+      } catch { /* best effort */ }
       return true;
     } catch (err) {
-      console.error('[commands] registration failed:', err.message);
+      console.error(`[commands] registration failed: ${err.message} (retrying in ${intervalMs}ms)`);
       return false;
     }
   };
