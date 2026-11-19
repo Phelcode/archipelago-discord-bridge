@@ -50,22 +50,24 @@ test('blocked players get a DM for each new item; last-received index advances f
   assert.match(dms[0][1], /Bob/);
   assert.match(dms[0][1], /\*\*g\*\*/);
   assert.equal(db.getPreference('u1').lastReceivedIndex.g, 1);
-  assert.equal(db.getPreference('u2').lastReceivedIndex.g, 0); // u2 unblocked: index still advances, no DM
+  assert.equal(db.getPreference('u2').lastReceivedIndex, undefined); // no new items -> index untouched
 
   // second tick: nothing new -> no further DMs
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
   assert.equal(dms.length, 1);
 });
 
-test('unblocked players get no DMs even with new items', async () => {
+test('an unblocked recipient gets no DM but their own index still advances', async () => {
   const { config, db } = makeEnv();
   db.setPlayer('u1', { slot: 'Alice', game: 'G' });
-  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1'] });
+  db.setPlayer('u2', { slot: 'Bob', game: 'G' });
+  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1', 'u2'] });
   const ap = apStub(RECEIVED);
   const dms = [];
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  assert.equal(dms.length, 0);
-  assert.equal(db.getPreference('u1').lastReceivedIndex.g, 1);
+  assert.equal(dms.length, 0); // u1 is not blocked
+  assert.equal(db.getPreference('u1').lastReceivedIndex.g, 1); // recipient's index advanced
+  assert.equal(db.getPreference('u2').lastReceivedIndex, undefined); // non-recipient untouched
 });
 
 test('non-running or dead games are skipped; probe failures are tolerated', async () => {

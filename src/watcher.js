@@ -1,6 +1,7 @@
 // Watches running games and DMs players who marked themselves "blocked"
-// when new items are sent to them. Also advances each player's stored
-// last-received index so /received (scope: new) only shows fresh items.
+// when new items are sent to them. Only the recipient's stored last-received
+// index advances (players with no new items are left untouched), which keeps
+// /received (scope: new) accurate.
 export async function pollRunningGames(config, db, apImpl, notify) {
   for (const game of db.listGames()) {
     if (game.status !== 'running' || !apImpl.isServerProcessAlive(game)) continue;
@@ -21,8 +22,10 @@ export async function pollRunningGames(config, db, apImpl, notify) {
       const prefs = db.getPreference(userId);
       const seen = prefs.lastReceivedIndex?.[game.name] || 0;
       const fresh = all.slice(seen);
+      if (!fresh.length) continue;
+      // Only the recipient of new items gets their index advanced.
       db.setPreference(userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [game.name]: all.length });
-      if (!fresh.length || !prefs.blocked) continue;
+      if (!prefs.blocked) continue;
       for (const it of fresh) {
         await notify(userId, `🔔 You are marked blocked — **${it.sender_name}** sent you **${it.item}** (found at ${it.location}) in game **${game.name}**.`).catch((err) => {
           console.error(`[watch] could not DM ${userId}: ${err.message}`);
