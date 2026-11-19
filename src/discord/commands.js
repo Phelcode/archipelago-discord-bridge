@@ -139,7 +139,7 @@ class RateLimitError extends Error {
 // logged and bounded. Short 429s are waited out inline; long ones (bulk
 // command PUTs can be limited for minutes) throw RateLimitError so the
 // scheduler retries later instead of blocking.
-async function apiFetch(config, method, path, body, timeoutMs = 10000) {
+async function apiFetch(config, method, path, body, timeoutMs = 10000, maxInline429Ms = 30000) {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: { Authorization: `Bot ${config.discordToken}`, 'Content-Type': 'application/json' },
@@ -149,10 +149,10 @@ async function apiFetch(config, method, path, body, timeoutMs = 10000) {
   if (res.status === 429) {
     const data = await res.json().catch(() => ({}));
     const waitMs = Math.max(0, (data.retry_after ?? 1)) * 1000;
-    if (waitMs > 30000) throw new RateLimitError(waitMs);
+    if (waitMs > maxInline429Ms) throw new RateLimitError(waitMs);
     console.warn(`[commands] 429 on ${method} ${path}, waiting ${waitMs}ms as Discord asks`);
     await new Promise((r) => setTimeout(r, waitMs));
-    return apiFetch(config, method, path, body, timeoutMs);
+    return apiFetch(config, method, path, body, timeoutMs, maxInline429Ms);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -190,10 +190,10 @@ function sameCommands(existing, desired) {
 // PUT commands replaces the whole list server-side (clears stale + registers
 // current, atomically), but bulk-overwriting application commands is heavily
 // rate-limited by Discord — so only PUT when the registered set differs.
-async function putCommandsIfChanged(config, path, payload, label) {
+async function putCommandsIfChanged(config, path, payload, label, maxInline429Ms) {
   let current = null;
   try {
-    current = await apiFetch(config, 'GET', path);
+    current = await apiFetch(config, 'GET', path, undefined, 10000, maxInline429Ms);
   } catch (err) {
     console.warn(`[commands] could not read current ${label} commands (${err.message}); re-registering`);
   }
@@ -201,11 +201,11 @@ async function putCommandsIfChanged(config, path, payload, label) {
     console.log(`[commands] ${label} commands already up to date (${payload.length}), skipping PUT`);
     return;
   }
-  await apiFetch(config, 'PUT', path, payload);
+  await apiFetch(config, 'PUT', path, payload, 10000, maxInline429Ms);
   console.log(`[commands] registered ${payload.length} ${label} commands.`);
 }
 
-export async function registerAllCommands(config, { guildIds = [], definitions, retryDelayMs = 5000 }) {
+export async function registerAllCommands(config, { guildIds = [], definitions, retryDelayMs = 5000, maxInline429Ms = 30000 }) {
   try {
     await apiFetch(config, 'PATCH', '/applications/@me', { integration_types: INTEGRATION_TYPES_BOTH });
     console.log('[commands] integration types set to guild + user install');
@@ -216,20 +216,20 @@ export async function registerAllCommands(config, { guildIds = [], definitions, 
   const globalPath = `/applications/${config.discordApplicationId}/commands`;
   console.log(`[commands] checking/registering ${definitions.length} global commands...`);
   try {
-    await putCommandsIfChanged(config, globalPath, globalPayload, 'global');
+    await putCommandsIfChanged(config, globalPath, globalPayload, 'global', maxInline429Ms);
   } catch (err) {
     if (err instanceof RateLimitError) {
-      console.warn(`[commands] global command PUT ${err.message}; the scheduler will retry in 60s`);
+      console.warn(`[commands] global command PUT ${err.message}; scheduler will wait out the cooldown`);
       throw err;
     }
     console.warn(`[commands] global registration failed (${err.message}); retrying once in ${retryDelayMs}ms...`);
     await new Promise((r) => setTimeout(r, retryDelayMs));
-    await putCommandsIfChanged(config, globalPath, globalPayload, 'global'); // throws if still failing
+    await putCommandsIfChanged(config, globalPath, globalPayload, 'global', maxInline429Ms); // throws if still failing
   }
   for (const guildId of guildIds) {
     const guildPath = `/applications/${config.discordApplicationId}/guilds/${guildId}/commands`;
     try {
-      await putCommandsIfChanged(config, guildPath, guildCommandPayload(definitions), `guild ${guildId}`);
+      await putCommandsIfChanged(config, guildPath, guildCommandPayload(definitions), `guild ${guildId}`, maxInline429Ms);
     } catch (err) {
       // Typically 403 Missing Access when the app isn't in that guild with the
       // bot + applications.commands scopes. Global commands still apply.
@@ -244,26 +244,34 @@ export async function registerAllCommands(config, { guildIds = [], definitions, 
 export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 } = {}) {
   let stopped = false;
   let timer = null;
+  let notBefore = 0; // earliest next attempt; set from 429 retry_after so we never hammer a rate-limited route
   const attempt = async () => {
     try {
       await registerAllCommands(config, opts);
       return true;
     } catch (err) {
-      console.error('[commands] registration failed:', err.message);
+      if (err instanceof RateLimitError) {
+        notBefore = Date.now() + err.retryAfterMs;
+        console.error(`[commands] registration ${err.message}; next attempt no earlier than ${new Date(notBefore).toISOString()}`);
+      } else {
+        console.error('[commands] registration failed:', err.message);
+      }
       return false;
     }
   };
-  console.log('[commands] registering slash commands...');
-  attempt().then((ok) => {
+  const loop = async () => {
+    if (stopped) return;
+    const ok = await attempt();
     if (ok || stopped) return;
-    timer = setInterval(async () => {
-      if (await attempt()) clearInterval(timer);
-    }, intervalMs);
+    const wait = Math.max(intervalMs, notBefore - Date.now());
+    timer = setTimeout(loop, wait);
     if (timer.unref) timer.unref();
-  });
+  };
+  console.log('[commands] registering slash commands...');
+  loop();
   return () => {
     stopped = true;
-    if (timer) clearInterval(timer);
+    if (timer) clearTimeout(timer);
   };
 }
 

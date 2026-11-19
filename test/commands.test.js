@@ -717,3 +717,23 @@ test('scheduleCommandRegistration retries on an interval until registration succ
   } finally { restore(); }
   assert.ok(n >= 3, `expected at least 3 PUT attempts, got ${n}`);
 });
+
+test('scheduleCommandRegistration waits out the 429 cooldown instead of retrying early', async () => {
+  let n = 0;
+  const { restore } = mockFetch((method, url) => {
+    if (method === 'PUT' && isGlobalCommands(url)) {
+      n += 1;
+      if (n === 1) return errRes(429, { retry_after: 0.2 }); // 200ms cooldown
+    }
+    return okJson([]);
+  });
+  const start = Date.now();
+  try {
+    // maxInline429Ms: 0 forces the 429 to surface as RateLimitError(200ms) to the scheduler
+    const stop = scheduleCommandRegistration(apiConfig, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1, maxInline429Ms: 0 }, { intervalMs: 5 });
+    await new Promise((r) => setTimeout(r, 600));
+    stop();
+  } finally { restore(); }
+  assert.equal(n, 2);
+  assert.ok(Date.now() - start >= 150, `should have waited out the ~200ms cooldown, took ${Date.now() - start}ms`);
+});
