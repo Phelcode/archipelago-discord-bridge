@@ -241,6 +241,15 @@ export async function registerAllCommands(config, { guildIds = [], definitions, 
 // Registers commands when called (on client ready) and retries every
 // intervalMs until it succeeds, so a transient failure can't leave the app
 // without slash commands. Returns a stop function.
+// Delay before the next registration attempt. After a 429 cooldown we wait
+// until the first interval tick AFTER the cooldown ends — retrying exactly at
+// retry_after often still 429s, because Discord's rate-limit windows reset on
+// coarse wall-clock boundaries, not precisely at retry_after.
+export function nextRetryDelay(notBefore, now, intervalMs) {
+  const remaining = notBefore - now;
+  return remaining > 0 ? Math.max(intervalMs, Math.ceil(remaining / intervalMs) * intervalMs) : intervalMs;
+}
+
 export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 } = {}) {
   let stopped = false;
   let timer = null;
@@ -259,12 +268,12 @@ export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 }
       return false;
     }
   };
+  // Own unref'd timer chain — a long cooldown never delays any other timer.
   const loop = async () => {
     if (stopped) return;
     const ok = await attempt();
     if (ok || stopped) return;
-    const wait = Math.max(intervalMs, notBefore - Date.now());
-    timer = setTimeout(loop, wait);
+    timer = setTimeout(loop, nextRetryDelay(notBefore, Date.now(), intervalMs));
     if (timer.unref) timer.unref();
   };
   console.log('[commands] registering slash commands...');

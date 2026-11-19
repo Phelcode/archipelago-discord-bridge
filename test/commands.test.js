@@ -7,7 +7,7 @@ import { Store } from '../src/store.js';
 import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
-  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration,
+  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, nextRetryDelay,
   ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
 } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
@@ -736,4 +736,14 @@ test('scheduleCommandRegistration waits out the 429 cooldown instead of retrying
   } finally { restore(); }
   assert.equal(n, 2);
   assert.ok(Date.now() - start >= 150, `should have waited out the ~200ms cooldown, took ${Date.now() - start}ms`);
+});
+
+test('nextRetryDelay rounds a 429 cooldown up to the next interval tick', () => {
+  const now = 1_000_000;
+  assert.equal(nextRetryDelay(now + 438000, now, 60000), 480000); // 7.3min cooldown -> 8min tick
+  assert.equal(nextRetryDelay(now + 259000, now, 60000), 300000); // 4.3min -> 5min tick
+  assert.equal(nextRetryDelay(now + 61000, now, 60000), 120000); // just past a tick -> following tick
+  assert.equal(nextRetryDelay(now + 10000, now, 60000), 60000); // small cooldown -> one interval
+  assert.equal(nextRetryDelay(now - 5000, now, 60000), 60000); // no cooldown -> one interval
+  assert.equal(nextRetryDelay(0, now, 60000), 60000);
 });
