@@ -113,13 +113,9 @@ export async function registerAllCommands(client, { guildId, definitions }) {
   } catch (err) {
     console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
-  // Clear existing global and guild commands, then re-add the current set
-  // (avoids duplicates and stale entries).
-  await client.application.commands.set([]);
   if (guildId) {
     try {
       const guild = await client.guilds.fetch(guildId);
-      await guild.commands.set([]);
       await guild.commands.set(guildCommandPayload(definitions));
     } catch (err) {
       // Common when the app isn't installed in that guild with the bot scope

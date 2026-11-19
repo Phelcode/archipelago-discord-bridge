@@ -531,25 +531,24 @@ function mockClient({ failGuild = false, failAppEdit = false } = {}) {
   return { client, calls };
 }
 
-test('registerAllCommands clears old commands, then re-adds global (+guild) commands', async () => {
+test('registerAllCommands bulk-overwrites global (+guild) commands in place, without clearing first', async () => {
   const { client, calls } = mockClient();
   await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
   assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  // clears first so nothing stays registered twice / stale commands disappear
-  assert.deepEqual(calls[1], ['global', []]);
-  assert.deepEqual(calls[2], ['guild', 'g1', []]);
-  // then re-adds: guild commands, then global
-  assert.equal(calls[3][0], 'guild');
-  assert.equal(calls[3][1], 'g1');
-  assert.deepEqual(calls[3][2][0].integration_types, [0]);
-  assert.equal(calls[4][0], 'global');
-  assert.equal(calls[4][1][0].integration_types[1], 1);
-  assert.deepEqual(calls[4][1][0].contexts, [0, 1, 2]);
+  // set() replaces the whole set, so no set([]) first: global (DM-visible)
+  // commands are never wiped while re-registration propagates
+  assert.equal(calls.filter((c) => Array.isArray(c[1]) && c[1].length === 0).length, 0);
+  assert.equal(calls[1][0], 'guild');
+  assert.equal(calls[1][1], 'g1');
+  assert.deepEqual(calls[1][2][0].integration_types, [0]);
+  assert.equal(calls[2][0], 'global');
+  assert.equal(calls[2][1][0].integration_types[1], 1);
+  assert.deepEqual(calls[2][1][0].contexts, [0, 1, 2]);
 
   const second = mockClient();
   await registerAllCommands(second.client, { guildId: null, definitions: COMMAND_DEFINITIONS });
   assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.deepEqual(second.calls[1], ['global', []]);
+  assert.equal(second.calls.length, 2);
   assert.equal(second.calls.filter((c) => c[0] === 'global' && c[1].length > 0).length, 1);
 });
 
