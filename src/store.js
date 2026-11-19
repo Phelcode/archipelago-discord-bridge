@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const EMPTY = () => ({ hosts: [], players: {}, games: {} });
+const EMPTY = () => ({ hosts: [], players: {}, games: {}, preferences: {} });
 
 export class Store {
   constructor(file) {
@@ -14,6 +14,7 @@ export class Store {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       this.data = { ...EMPTY(), ...parsed };
+      this.data.preferences = this.data.preferences || {};
     } catch {
       this.data = EMPTY();
     }
@@ -58,6 +59,15 @@ export class Store {
 
   clearPlayers() {
     this.data.players = {};
+    this.save();
+  }
+
+  getPreference(userId) {
+    return this.data.preferences[userId] || {};
+  }
+
+  setPreference(userId, key, value) {
+    this.data.preferences[userId] = { ...(this.data.preferences[userId] || {}), [key]: value };
     this.save();
   }
 

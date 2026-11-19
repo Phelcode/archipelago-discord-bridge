@@ -57,26 +57,47 @@ function runProcess(config, args, options = {}) {
   });
 }
 
-export function saveApworld(config, game, filename, buffer) {
-  const dir = path.join(gameDir(config, game), 'apworlds');
+// .apworld files are global: uploaded once, they are installed into every
+// game's world directory at generation time.
+export function apworldDir(config) {
+  return path.join(config.dataDir, 'apworlds');
+}
+
+export function listApworlds(config) {
+  try {
+    return fs.readdirSync(apworldDir(config)).filter((f) => f.toLowerCase().endsWith('.apworld')).sort();
+  } catch {
+    return [];
+  }
+}
+
+export function saveApworld(config, filename, buffer) {
+  const dir = apworldDir(config);
   fs.mkdirSync(dir, { recursive: true });
   const safeName = path.basename(filename);
   fs.writeFileSync(path.join(dir, safeName), buffer);
-  if (!game.apworlds.includes(safeName)) {
-    game.apworlds.push(safeName);
-  }
   return safeName;
 }
 
+// AP loads custom apworlds from <apDir>/custom_worlds when the install dir is
+// writable (our container runs as root, so it always is), and from
+// $XDG_DATA_HOME/Archipelago/worlds otherwise. Install into both so the
+// apworlds are found either way.
 export function installApworlds(config, game) {
-  const worldsDir = path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds');
-  fs.rmSync(worldsDir, { recursive: true, force: true });
-  fs.mkdirSync(worldsDir, { recursive: true });
-  const srcDir = path.join(gameDir(config, game), 'apworlds');
-  for (const file of game.apworlds) {
-    fs.copyFileSync(path.join(srcDir, file), path.join(worldsDir, file));
+  const srcDir = apworldDir(config);
+  const files = listApworlds(config);
+  const targets = [
+    path.join(config.apDir, 'custom_worlds'),
+    path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds'),
+  ];
+  for (const dir of targets) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const file of files) {
+      fs.copyFileSync(path.join(srcDir, file), path.join(dir, file));
+    }
   }
-  return worldsDir;
+  return targets[0];
 }
 
 export function stagePlayers(config, db, game) {
@@ -132,8 +153,9 @@ const runningServers = new Map();
 
 export function startGame(config, db, game, port) {
   ensureDirs(gameDir(config, game));
+  installApworlds(config, game);
   if (!game.multidata || !fs.existsSync(game.multidata)) {
-    throw new Error('Game has not been generated yet. Run /generate first.');
+    throw new Error('Game has not been generated yet.');
   }
   const logFile = path.join(gameDir(config, game), 'server.log');
   const logStream = fs.openSync(logFile, 'a');
@@ -173,6 +195,15 @@ export function stopGame(config, game) {
 export function isServerProcessAlive(game) {
   if (!game.pid) return false;
   try { process.kill(game.pid, 0); return true; } catch { return false; }
+}
+
+export function isPortListening(port, host = '127.0.0.1', timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, host);
+    socket.once('connect', () => { socket.end(); resolve(true); });
+    socket.once('error', () => resolve(false));
+    setTimeout(() => { socket.destroy(); resolve(false); }, timeoutMs);
+  });
 }
 
 export async function waitForPort(port, timeoutMs = 15000) {

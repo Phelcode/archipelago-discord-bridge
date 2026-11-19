@@ -4,7 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
-import { handleCommand, parseInteraction, UserError, globalCommandPayload, guildCommandPayload, registerAllCommands, COMMAND_DEFINITIONS } from '../src/discord/commands.js';
+import {
+  handleCommand, handleModal, UserError,
+  globalCommandPayload, guildCommandPayload, registerAllCommands,
+  registerModal, uploadApworldModal, setupGameModal,
+  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
+} from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -22,74 +27,65 @@ function makeConfig() {
 function makeCtx(overrides = {}) {
   const config = overrides.config || makeConfig();
   const db = overrides.db || new Store(path.join(config.dataDir, 'db.json'));
-  const api = overrides.api || {
-    async downloadAttachment() { throw new Error('no network in tests'); },
-  };
   const ap = overrides.ap || realAp;
   return {
     config,
     db,
-    api,
     ap,
     userId: overrides.userId || 'user-1',
     userName: 'tester',
+    download: overrides.download || (async () => { throw new Error('no network in tests'); }),
     options: overrides.options || {},
     attachments: overrides.attachments || {},
     subcommand: overrides.subcommand || null,
     subOptions: overrides.subOptions || {},
+    modal: overrides.modal || null,
   };
 }
 
-function commandInteraction(name, options = [], resolved = {}) {
-  return {
-    type: 2,
-    token: 'tok',
-    data: { name, options, resolved },
-    member: { user: { id: 'user-1', username: 'tester' } },
-    guild_id: 'guild-1',
-  };
-}
-
-test('parseInteraction parses options, users and attachments', () => {
-  const interaction = commandInteraction('upload-apworld', [
-    { name: 'game', type: 3, value: 'mygame' },
-    { name: 'file', type: 10, value: 'att-1' },
-  ], {
-    attachments: { 'att-1': { id: 'att-1', filename: 'x.apworld', url: 'https://cdn/x', size: 10 } },
-  });
-  const parsed = parseInteraction(interaction);
-  assert.equal(parsed.options.game, 'mygame');
-  assert.equal(parsed.attachments.file.filename, 'x.apworld');
+test('commands lists every command on its own line with a summary', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('commands', ctx);
+  for (const def of COMMAND_DEFINITIONS) {
+    assert.ok(out.includes(`• \`/${def.name}\` — `), `missing line for /${def.name}`);
+  }
+  assert.match(out, /\/setup-game` — \[host\]/);
 });
 
-test('parseInteraction parses subcommands', () => {
-  const interaction = commandInteraction('role', [
-    { name: 'add', type: 1, options: [
-      { name: 'user', type: 6, value: 'u-9' },
-      { name: 'role', type: 3, value: 'host' },
-    ] },
-  ], { users: { 'u-9': { id: 'u-9' } } });
-  const parsed = parseInteraction(interaction);
-  assert.equal(parsed.subcommand, 'add');
-  assert.equal(parsed.subOptions.user, 'u-9');
-  assert.equal(parsed.subOptions.role, 'host');
-});
+test('help walks each role through their own steps', async () => {
+  const owner = await handleCommand('help', makeCtx({ userId: 'owner-1' }));
+  assert.match(owner, /role: owner/);
+  assert.match(owner, /\/role add host/);
+  assert.match(owner, /\/setup-game/);
+  assert.match(owner, /\/start game:/);
 
-test('help lists role-appropriate commands', async () => {
-  const ctx = makeCtx({ userId: 'owner-1' });
-  const out = await handleCommand('help', ctx);
-  assert.match(out, /owner/);
-  assert.match(out, /\/role/);
+  const hostCtx = makeCtx({ userId: 'host-1' });
+  hostCtx.db.addHost('host-1');
+  const host = await handleCommand('help', hostCtx);
+  assert.match(host, /role: host/);
+  assert.match(host, /Hosting a game/);
+  assert.match(host, /\/upload-apworld/);
+  assert.doesNotMatch(host, /\/role add/);
+
+  const playerCtx = makeCtx({ userId: 'user-1' });
+  playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const player = await handleCommand('help', playerCtx);
+  assert.match(player, /role: player/);
+  assert.match(player, /\/join game:/);
+  assert.match(player, /\/hints/);
+
   const spectator = await handleCommand('help', makeCtx({ userId: 'nobody' }));
-  assert.match(spectator, /spectator/);
-  assert.doesNotMatch(spectator, /\/setup-game/);
+  assert.match(spectator, /role: spectator/);
+  assert.match(spectator, /Spectating/);
+  assert.match(spectator, /\/register/);
+  assert.match(spectator, /\/commands/);
 });
 
 test('register validates and stores the player yaml', async () => {
   const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
   const ctx = makeCtx({
     attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'https://cdn/alice.yaml' } },
-    api: { async downloadAttachment() { return Buffer.from(yaml); } },
+    download: async () => Buffer.from(yaml),
   });
   const out = await handleCommand('register', ctx);
   assert.match(out, /Alice/);
@@ -101,7 +97,7 @@ test('register validates and stores the player yaml', async () => {
 test('register rejects bad yaml', async () => {
   const ctx = makeCtx({
     attachments: { yaml: { filename: 'bad.yaml', size: 5, url: 'u' } },
-    api: { async downloadAttachment() { return Buffer.from('foo: bar\n'); } },
+    download: async () => Buffer.from('foo: bar\n'),
   });
   await assert.rejects(() => handleCommand('register', ctx), UserError);
 });
@@ -109,9 +105,20 @@ test('register rejects bad yaml', async () => {
 test('register rejects non-yaml filename', async () => {
   const ctx = makeCtx({
     attachments: { yaml: { filename: 'evil.apworld', size: 5, url: 'u' } },
-    api: { async downloadAttachment() { return Buffer.from('x'); } },
+    download: async () => Buffer.from('x'),
   });
   await assert.rejects(() => handleCommand('register', ctx), /not a \.yaml/);
+});
+
+test('handleModal routes the register modal to the register handler', async () => {
+  const yaml = 'name: Dave\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const ctx = makeCtx({
+    download: async () => Buffer.from(yaml),
+    modal: { fields: { name: '' }, files: { yaml: [{ id: 'a1', filename: 'dave.yaml', size: yaml.length, url: 'https://cdn/dave.yaml' }] } },
+  });
+  const out = await handleModal(MODAL_REGISTER, ctx);
+  assert.match(out, /Dave/);
+  assert.equal(ctx.db.getPlayer('user-1').slot, 'Dave');
 });
 
 test('setup-game creates a game and join adds the player', async () => {
@@ -158,19 +165,19 @@ test('join requires registration', async () => {
   await assert.rejects(() => handleCommand('join', ctx), /register/);
 });
 
-test('upload-apworld validates zip magic and stores the file', async () => {
+test('upload-apworld validates zip magic and stores the file globally (not per game)', async () => {
   const ctx = makeCtx();
-  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], apworlds: [] });
   const zipBuf = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(100)]);
-  ctx.options = { game: 'g' };
   ctx.attachments = { file: { filename: 'cool.apworld', size: zipBuf.length, url: 'u' } };
-  ctx.api = { async downloadAttachment() { return zipBuf; } };
+  ctx.download = async () => zipBuf;
   const out = await handleCommand('upload-apworld', ctx);
   assert.match(out, /cool\.apworld/);
-  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'games', 'g', 'apworlds', 'cool.apworld')));
+  assert.match(out, /every game/);
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'apworlds', 'cool.apworld')));
+  assert.equal(fs.existsSync(path.join(ctx.config.dataDir, 'games')), false);
 
   ctx.attachments = { file: { filename: 'fake.apworld', size: 4, url: 'u' } };
-  ctx.api = { async downloadAttachment() { return Buffer.from('nope'); } };
+  ctx.download = async () => Buffer.from('nope');
   await assert.rejects(() => handleCommand('upload-apworld', ctx), /not a valid zip/);
 });
 
@@ -249,6 +256,77 @@ test('stats on a non-running game fails with a clear message', async () => {
   await assert.rejects(() => handleCommand('stats', ctx), /not running/);
 });
 
+test('status lists active games by default, finished via scope, everything via all', async () => {
+  const ctx = makeCtx();
+  ctx.db.setGame('live', { name: 'live', status: 'running', port: 39001, playerIds: [] });
+  ctx.db.setGame('ready', { name: 'ready', status: 'generated', playerIds: [] });
+  ctx.db.setGame('old', { name: 'old', status: 'stopped', playerIds: [] });
+
+  let out = await handleCommand('status', ctx);
+  assert.match(out, /Active games/);
+  assert.match(out, /\*\*live\*\*/);
+  assert.match(out, /\*\*ready\*\*/);
+  assert.doesNotMatch(out, /\*\*old\*\*/);
+
+  ctx.options = { scope: 'finished' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /Finished games/);
+  assert.match(out, /\*\*old\*\*/);
+  assert.doesNotMatch(out, /\*\*live\*\*/);
+
+  ctx.options = { scope: 'all' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /\*\*live\*\*/);
+  assert.match(out, /\*\*old\*\*/);
+
+  ctx.options = { game: 'old' };
+  out = await handleCommand('status', ctx);
+  assert.match(out, /\*\*old\*\*/);
+  assert.doesNotMatch(out, /\*\*live\*\*/);
+});
+
+test('status with no games explains how to create one', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('status', ctx);
+  assert.match(out, /No games yet/);
+  assert.match(out, /\/setup-game/);
+});
+
+test('delete-game stops a running server, removes the db entry and files', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: [], pid: 12345 });
+  const dir = realAp.gameDir(ctx.config, { name: 'g' });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'server.log'), 'log');
+  let stopped = false;
+  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; }, isServerProcessAlive: () => true };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('delete-game', ctx);
+  assert.match(out, /Deleted game \*\*g\*\*/);
+  assert.equal(stopped, true);
+  assert.equal(ctx.db.getGame('g'), null);
+  assert.equal(fs.existsSync(dir), false);
+});
+
+test('delete-game does not touch a stopped game server but still removes it', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.setGame('g', { name: 'g', status: 'stopped', playerIds: [] });
+  let stopped = false;
+  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; } };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('delete-game', ctx);
+  assert.match(out, /Deleted game/);
+  assert.equal(stopped, false);
+  assert.equal(ctx.db.getGame('g'), null);
+});
+
+test('delete-game on an unknown game fails clearly', async () => {
+  const ctx = makeCtx();
+  ctx.options = { game: 'nope' };
+  await assert.rejects(() => handleCommand('delete-game', ctx), /Unknown game/);
+});
+
 test('role add/remove/list manage hosts', async () => {
   const ctx = makeCtx({ userId: 'owner-1' });
   ctx.subcommand = 'add';
@@ -267,6 +345,13 @@ test('role add/remove/list manage hosts', async () => {
   assert.equal(ctx.db.isHost('host-9'), false);
 });
 
+test('role rejects assigning the owner', async () => {
+  const ctx = makeCtx({ userId: 'owner-1' });
+  ctx.subcommand = 'add';
+  ctx.subOptions = { user: 'owner-1', role: 'host' };
+  await assert.rejects(() => handleCommand('role', ctx), /owner/);
+});
+
 test('command payloads support guild and user install in all contexts', () => {
   const global = globalCommandPayload(COMMAND_DEFINITIONS);
   assert.ok(global.length >= 15);
@@ -281,29 +366,196 @@ test('command payloads support guild and user install in all contexts', () => {
   }
 });
 
-test('registerAllCommands updates the app and registers global (+guild) commands', async () => {
-  const calls = [];
-  const api = {
-    async updateApplication(patch) { calls.push(['app', patch]); },
-    async registerCommands(defs) { calls.push(['global', defs]); },
-    async registerGuildCommands(guildId, defs) { calls.push(['guild', guildId, defs]); },
+test('form commands take no inline options and always open a modal', () => {
+  const byName = Object.fromEntries(COMMAND_DEFINITIONS.map((d) => [d.name, d]));
+  const expectedModal = {
+    register: MODAL_REGISTER,
+    'upload-apworld': MODAL_UPLOAD_APWORLD,
+    'setup-game': MODAL_SETUP_GAME,
   };
-  await registerAllCommands(api, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
-  assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  assert.equal(calls[1][0], 'global');
-  assert.equal(calls[1][1][0].integration_types[1], 1);
-  assert.equal(calls[2][0], 'guild');
-  assert.equal(calls[2][1], 'g1');
-
-  calls.length = 0;
-  await registerAllCommands(api, { guildId: null, definitions: COMMAND_DEFINITIONS });
-  assert.equal(calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.equal(calls.filter((c) => c[0] === 'global').length, 1);
+  for (const [name, customId] of Object.entries(expectedModal)) {
+    assert.ok(ALWAYS_MODAL[name], `${name} is always-modal`);
+    assert.deepEqual(byName[name].options, [], `${name} has no inline options`);
+    assert.equal(ALWAYS_MODAL[name]().toJSON().custom_id, customId);
+  }
+  // required options must precede optional ones (Discord validation rule)
+  for (const def of COMMAND_DEFINITIONS) {
+    const opts = def.options || [];
+    const firstOptional = opts.findIndex((o) => !o.required);
+    if (firstOptional !== -1) {
+      assert.ok(opts.slice(firstOptional).every((o) => !o.required), `${def.name}: required option after optional`);
+    }
+  }
 });
 
-test('role rejects assigning the owner', async () => {
-  const ctx = makeCtx({ userId: 'owner-1' });
-  ctx.subcommand = 'add';
-  ctx.subOptions = { user: 'owner-1', role: 'host' };
-  await assert.rejects(() => handleCommand('role', ctx), /owner/);
+test('modal builders produce file-upload (type 19) and text (type 4) components inside labels', () => {
+  const reg = registerModal().toJSON();
+  assert.equal(reg.custom_id, 'bridge_register');
+  const fileComp = reg.components.find((c) => c.component.type === 19);
+  assert.ok(fileComp, 'register modal has a file upload component');
+  assert.equal(fileComp.component.custom_id, 'yaml');
+  assert.ok(reg.components.some((c) => c.component.type === 4 && c.component.custom_id === 'name'));
+
+  const up = uploadApworldModal().toJSON();
+  assert.equal(up.custom_id, 'bridge_upload_apworld');
+  assert.ok(up.components.some((c) => c.component.type === 19 && c.component.custom_id === 'file'));
+  assert.ok(up.components.every((c) => c.component.type === 19), 'apworld upload has no game field — apworlds are global');
+
+  const setup = setupGameModal().toJSON();
+  assert.equal(setup.custom_id, 'bridge_setup_game');
+  assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'name'));
+  assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'password'));
+  assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
+});
+
+test('command names avoid the built-in /me and include commands + help', () => {
+  const names = COMMAND_DEFINITIONS.map((d) => d.name);
+  assert.ok(names.includes('profile'));
+  assert.ok(names.includes('commands'));
+  assert.ok(names.includes('help'));
+  assert.ok(!names.includes('me'));
+  assert.ok(!names.includes('whoami'));
+});
+
+test('profile shows role/registration and sets the private-responses preference', async () => {
+  const ctx = makeCtx({ userId: 'user-1' });
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  let out = await handleCommand('profile', ctx);
+  assert.match(out, /Role: \*\*player\*\*/);
+  assert.match(out, /Alice/);
+  assert.match(out, /public/);
+
+  ctx.options = { responses: 'private' };
+  out = await handleCommand('profile', ctx);
+  assert.match(out, /private \(only you can see them\)/);
+  assert.equal(ctx.db.getPreference('user-1').privateResponses, true);
+
+  ctx.options = { responses: 'public' };
+  await handleCommand('profile', ctx);
+  assert.equal(ctx.db.getPreference('user-1').privateResponses, false);
+
+  ctx.options = { responses: 'banana' };
+  await assert.rejects(() => handleCommand('profile', ctx), /private.*public/);
+});
+
+test('setup-game modal stores name/password/seed; /start generates then runs', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.modal = { fields: { name: 'Modal Game', password: 'pw', seed: '424242' }, files: {} };
+  const out = await handleCommand('setup-game', ctx);
+  assert.match(out, /modal-game/);
+  assert.match(out, /\/start/);
+  assert.equal(ctx.db.getGame('modal-game').password, 'pw');
+  assert.equal(ctx.db.getGame('modal-game').requestedSeed, '424242');
+
+  const startCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'host-1' });
+  startCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const g = startCtx.db.getGame('modal-game');
+  g.playerIds = ['user-1'];
+  startCtx.db.setGame('modal-game', g);
+  let generatedWith;
+  startCtx.ap = {
+    ...realAp,
+    async generateGame(c, d, game, seed) {
+      generatedWith = seed;
+      return { multidata: path.join(ctx.config.dataDir, 'x.zip'), spoiler: '/tmp/s.txt', seed: '1', seedNumber: Number(seed), players: ['Alice'], log: '' };
+    },
+    startGame: () => ({ pid: 123, logFile: '/tmp/log' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => true,
+  };
+  startCtx.options = { game: 'modal-game' };
+  const startOut = await handleCommand('start', startCtx);
+  assert.equal(generatedWith, 424242);
+  assert.match(startOut, /Generated multiworld/);
+  assert.match(startOut, /running/);
+  assert.equal(startCtx.db.getGame('modal-game').status, 'running');
+  assert.equal(startCtx.db.getGame('modal-game').seedNumber, 424242);
+
+  await assert.rejects(() => handleCommand('start', startCtx), /already running/);
+});
+
+test('setup-game rejects a non-integer seed in the form', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  ctx.modal = { fields: { name: 'g', password: '', seed: 'abc' }, files: {} };
+  await assert.rejects(() => handleCommand('setup-game', ctx), /integer/);
+});
+
+test('start reuses an existing generation instead of regenerating', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  const zip = path.join(ctx.config.dataDir, 'x.zip');
+  fs.writeFileSync(zip, 'PK');
+  ctx.db.setGame('g', { name: 'g', status: 'generated', multidata: zip, seed: '1', seedNumber: 5, playerIds: [] });
+  let genCalled = false;
+  ctx.ap = {
+    ...realAp,
+    generateGame: async () => { genCalled = true; throw new Error('should not be called'); },
+    startGame: () => ({ pid: 1, logFile: '/tmp/l' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => true,
+  };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('start', ctx);
+  assert.equal(genCalled, false);
+  assert.match(out, /running/);
+  assert.doesNotMatch(out, /Generated multiworld/);
+});
+
+test('start with a bad stored seed fails clearly and stays in setup', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], requestedSeed: 'abc' });
+  ctx.options = { game: 'g' };
+  await assert.rejects(() => handleCommand('start', ctx), /integer/);
+  assert.equal(ctx.db.getGame('g').status, 'setup');
+});
+
+function mockClient({ failGuild = false, failAppEdit = false } = {}) {
+  const calls = [];
+  const client = {
+    application: {
+      edit: async (patch) => { if (failAppEdit) throw new Error('403'); calls.push(['app', patch]); },
+      commands: { set: async (defs) => { calls.push(['global', defs]); } },
+    },
+    guilds: {
+      fetch: async (id) => ({
+        commands: {
+          set: async (defs) => {
+            if (failGuild) throw new Error('Discord APIError: 403 Missing Access');
+            calls.push(['guild', id, defs]);
+          },
+        },
+      }),
+    },
+  };
+  return { client, calls };
+}
+
+test('registerAllCommands clears old commands, then re-adds global (+guild) commands', async () => {
+  const { client, calls } = mockClient();
+  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
+  assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
+  // clears first so nothing stays registered twice / stale commands disappear
+  assert.deepEqual(calls[1], ['global', []]);
+  assert.deepEqual(calls[2], ['guild', 'g1', []]);
+  // then re-adds: guild commands, then global
+  assert.equal(calls[3][0], 'guild');
+  assert.equal(calls[3][1], 'g1');
+  assert.deepEqual(calls[3][2][0].integration_types, [0]);
+  assert.equal(calls[4][0], 'global');
+  assert.equal(calls[4][1][0].integration_types[1], 1);
+  assert.deepEqual(calls[4][1][0].contexts, [0, 1, 2]);
+
+  const second = mockClient();
+  await registerAllCommands(second.client, { guildId: null, definitions: COMMAND_DEFINITIONS });
+  assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
+  assert.deepEqual(second.calls[1], ['global', []]);
+  assert.equal(second.calls.filter((c) => c[0] === 'global' && c[1].length > 0).length, 1);
+});
+
+test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {
+  const { client } = mockClient({ failAppEdit: true, failGuild: true });
+  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS }); // must not throw
+  const noGuild = mockClient({ failGuild: true });
+  await registerAllCommands(noGuild.client, { guildId: null, definitions: COMMAND_DEFINITIONS }); // must not throw
 });

@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim
+# Trixie (Debian 13) ships Python 3.13. Archipelago requires Python
+# 3.12.0-3.13.x (ModuleUpdate rejects other versions at import time).
+FROM node:22-trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -18,7 +20,8 @@ COPY . .
 # every boot (see scripts/entrypoint.sh).
 RUN python3 -m venv /opt/ap-venv \
  && /opt/ap-venv/bin/pip install --quiet --upgrade pip \
- && /opt/ap-venv/bin/pip install --quiet --no-cache-dir -r /opt/app/docker/requirements-ap.txt
+ && /opt/ap-venv/bin/pip install --quiet --no-cache-dir -r /opt/app/docker/requirements-ap.txt \
+ && /opt/ap-venv/bin/python -c "import sys; v = sys.version_info; assert (3, 12) <= (v.major, v.minor) <= (3, 13), f'Archipelago needs Python 3.12-3.13, image has {v.major}.{v.minor}'"
 
 ENV DATA_DIR=/data \
     PORT=3000 \
@@ -26,7 +29,8 @@ ENV DATA_DIR=/data \
     AP_PYTHON=/opt/ap-venv/bin/python
 
 VOLUME ["/data"]
-# Bridge HTTP port (health check; interactions endpoint in DISCORD_GATEWAY=false mode)
+# Bridge HTTP port (health check only; interactions arrive over the Discord
+# gateway via discord.js, so this port does not need to be public)
 EXPOSE 3000
 # Archipelago game servers spawned by the bridge listen on BASE_PORT (default
 # 38281) and up — players connect to these. Adjust if you change BASE_PORT.

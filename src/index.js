@@ -1,179 +1,85 @@
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { Events } from 'discord.js';
 import { loadConfig } from './config.js';
 import { Store } from './store.js';
-import { verifySignature, isFreshTimestamp } from './discord/verify.js';
-import { createDiscordApi } from './discord/api.js';
-import { startGateway } from './discord/gateway.js';
-import { PERMISSIONS, EPHEMERAL_COMMANDS, COMMAND_DEFINITIONS, parseInteraction, handleCommand, registerAllCommands, UserError } from './discord/commands.js';
-import { canHost, isOwner } from './discord/permissions.js';
+import { createDiscordClient } from './discord/client.js';
+import { registerAllCommands, COMMAND_DEFINITIONS } from './discord/commands.js';
+import * as ap from './ap/manager.js';
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-function sendJson(res, status, body) {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(payload);
-}
-
-export function chunkContent(text, max = 1900) {
-  if (text.length <= max) return [text];
-  const chunks = [];
-  let rest = text;
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf('\n', max);
-    if (cut < max / 2) cut = max;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n/, '');
-  }
-  if (rest.length) chunks.push(rest);
-  return chunks;
-}
-
-export async function processInteraction(interaction, { config, db, api }) {
-  const token = interaction.token;
-  const userId = interaction.member?.user?.id || interaction.user?.id;
-  const userName = interaction.member?.user?.username || interaction.user?.username || userId;
-  const { options, attachments, subcommand, subOptions } = parseInteraction(interaction);
-  const ctx = { config, db, api, userId, userName, options, attachments, subcommand, subOptions };
-  try {
-    const content = await handleCommand(interaction.data.name, ctx);
-    const chunks = chunkContent(String(content));
-    await api.editOriginal(token, { content: chunks[0] });
-    for (const chunk of chunks.slice(1)) {
-      await api.followup(token, { content: chunk });
-    }
-  } catch (err) {
-    if (err instanceof UserError) {
-      await api.editOriginal(token, { content: `❌ ${err.message}` });
-    } else {
-      console.error(`Error handling /${interaction.data.name}:`, err);
-      await api.editOriginal(token, { content: `❌ Something went wrong: ${err.message}` }).catch(() => {});
-    }
-  }
-}
-
-// Returns the initial interaction response object (PONG, ephemeral denial, or
-// deferred reply). After a deferred reply, the actual answer is sent via the
-// followup webhook in processInteraction. Used by both the HTTP endpoint and
-// the gateway transport.
-export function createDispatcher({ config, db, api }) {
-  return async function dispatch(interaction) {
-    if (interaction.type === 1) return { type: 1 };
-    if (interaction.type !== 2) return null;
-    // When DISCORD_GUILD_ID is set, only interactions from that guild are
-    // accepted; user-installed (DM / private channel) interactions have no
-    // guild_id and are rejected in that case.
-    if (config.discordGuildId && interaction.guild_id !== config.discordGuildId) {
-      return { type: 4, data: { flags: 64, content: '❌ This app is restricted to a specific server.' } };
-    }
-    const name = interaction.data?.name;
-    const perm = PERMISSIONS[name] || 'all';
-    const userId = interaction.member?.user?.id || interaction.user?.id;
-    if (perm === 'owner' && !isOwner(config, userId)) {
-      return { type: 4, data: { flags: 64, content: '❌ Only the owner can use this command.' } };
-    }
-    if (perm === 'host' && !canHost(db, config, userId)) {
-      return { type: 4, data: { flags: 64, content: '❌ Only hosts (or the owner) can use this command.' } };
-    }
-    const ephemeral = EPHEMERAL_COMMANDS.has(name);
-    processInteraction(interaction, { config, db, api })
-      .catch((err) => console.error('Interaction processing failed:', err));
-    return { type: 5, data: ephemeral ? { flags: 64 } : {} };
-  };
-}
-
-export function createApp({ config, db, api, dispatch }) {
-  async function handleInteractions(req, res) {
-    const raw = await readBody(req);
-    if (!config.discordPublicKey ||
-        !verifySignature(config.discordPublicKey, req.headers['x-signature-ed25519'], req.headers['x-signature-timestamp'], raw.toString('utf8')) ||
-        !isFreshTimestamp(req.headers['x-signature-timestamp'])) {
-      sendJson(res, 401, { error: 'invalid signature' });
-      return;
-    }
-    let interaction;
-    try {
-      interaction = JSON.parse(raw.toString('utf8'));
-    } catch {
-      sendJson(res, 400, { error: 'invalid json' });
-      return;
-    }
-    const response = await dispatch(interaction);
-    if (response === null) {
-      sendJson(res, 400, { error: 'unsupported interaction type' });
-      return;
-    }
-    sendJson(res, 200, response);
-  }
-
-  return http.createServer((req, res) => {
+function createHealthServer(config) {
+  const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    if (req.method === 'POST' && url.pathname === '/interactions') {
-      handleInteractions(req, res).catch((err) => {
-        console.error(err);
-        if (!res.headersSent) sendJson(res, 500, { error: 'internal error' });
-      });
-      return;
-    }
     if (req.method === 'GET' && url.pathname === '/health') {
-      sendJson(res, 200, { ok: true });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
-    sendJson(res, 404, { error: 'not found' });
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
   });
+  server.listen(config.port, () => {
+    console.log(`archipelago-discord-bridge health endpoint on port ${config.port} (data dir: ${config.dataDir})`);
+  });
+  return server;
+}
+
+// On boot, games that were running when the container stopped are restarted:
+// their Archipelago server is spawned again (reusing the existing multiworld)
+// on their old port or the next free one. Games stuck in 'generating', or
+// running without a multiworld, are marked stopped.
+export async function restartRunningGames(config, db, apImpl = ap) {
+  for (const game of db.listGames()) {
+    if (game.status === 'generating') {
+      game.status = 'stopped';
+      db.setGame(game.name, game);
+    }
+  }
+  const running = db.listGames().filter((g) => g.status === 'running');
+  for (const game of running) {
+    if (!game.multidata || !fs.existsSync(game.multidata)) {
+      game.status = 'stopped';
+      db.setGame(game.name, game);
+      console.warn(`[boot] game "${game.name}" was running but has no generated multiworld; marked stopped`);
+      continue;
+    }
+    const used = new Set(db.listGames().filter((g) => g.name !== game.name && g.port).map((g) => g.port));
+    let port = game.port && !used.has(game.port) ? game.port : config.basePort;
+    while (used.has(port) || (await apImpl.isPortListening(port))) port += 1;
+    try {
+      const { pid, logFile } = apImpl.startGame(config, db, game, port);
+      const up = await apImpl.waitForPort(port, 15000);
+      if (!up) throw new Error(`server did not come up on port ${port} (see ${logFile})`);
+      game.port = port;
+      game.pid = pid;
+      game.startedAt = new Date().toISOString();
+      db.setGame(game.name, game);
+      console.log(`[boot] restarted running game "${game.name}" on ${config.publicHost}:${port}`);
+    } catch (err) {
+      try { apImpl.stopGame(config, game); } catch { /* already dead */ }
+      game.status = 'stopped';
+      db.setGame(game.name, game);
+      console.error(`[boot] failed to restart game "${game.name}": ${err.message}`);
+    }
+  }
 }
 
 async function main() {
   const config = loadConfig();
   const db = new Store(path.join(config.dataDir, 'db.json'));
-  for (const game of db.listGames()) {
-    if (game.status === 'running' || game.status === 'generating') {
-      game.status = 'stopped';
-      db.setGame(game.name, game);
+  await restartRunningGames(config, db);
+  const client = createDiscordClient({ config, db });
+  client.once(Events.ClientReady, async (readyClient) => {
+    try {
+      await registerAllCommands(readyClient, { guildId: config.discordGuildId, definitions: COMMAND_DEFINITIONS });
+      console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord (guild + user install).`);
+    } catch (err) {
+      console.error('Could not register slash commands with Discord (set installation contexts and commands in the dev portal if needed):', err.message);
     }
-  }
-  const api = createDiscordApi({
-    token: config.discordToken,
-    applicationId: config.discordApplicationId,
-    apiBase: config.discordApiBase,
   });
-  const dispatch = createDispatcher({ config, db, api });
-  const app = createApp({ config, db, api, dispatch });
-  app.listen(config.port, () => {
-    console.log(`archipelago-discord-bridge listening on port ${config.port} (data dir: ${config.dataDir})`);
-  });
-  try {
-    await registerAllCommands(api, { guildId: config.discordGuildId, definitions: COMMAND_DEFINITIONS });
-    console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord (guild + user install).`);
-  } catch (err) {
-    console.error('Could not register slash commands with Discord (set installation contexts and commands in the dev portal if needed):', err.message);
-  }
-  if (config.useGateway) {
-    startGateway({
-      token: config.discordToken,
-      intents: config.gatewayIntents,
-      url: config.gatewayUrl,
-      onInteraction: async (interaction) => {
-        try {
-          const response = await dispatch(interaction);
-          if (response) await api.respondToInteraction(interaction.id, interaction.token, response);
-        } catch (err) {
-          console.error('[gateway] failed to send initial interaction response:', err.message);
-        }
-      },
-    });
-    console.log('Gateway mode: receiving interactions over the Discord gateway (no public URL needed).');
-  } else {
-    console.log('HTTP endpoint mode: receiving interactions at POST /interactions (requires a public HTTPS URL in the dev portal).');
-  }
+  createHealthServer(config);
+  await client.login(config.discordToken);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {

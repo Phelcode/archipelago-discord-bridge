@@ -6,25 +6,41 @@ const base = {
   DISCORD_TOKEN: 't',
   DISCORD_APPLICATION_ID: 'a',
   DISCORD_OWNER_ID: 'o',
-  DISCORD_PUBLIC_KEY: 'pk',
 };
-
-test('gateway mode is the default and does not require the public key', () => {
-  const { DISCORD_PUBLIC_KEY, ...env } = base;
-  const config = loadConfig(env);
-  assert.equal(config.useGateway, true);
-  assert.equal(config.discordPublicKey, null);
-  assert.equal(config.gatewayIntents, 0);
-});
-
-test('HTTP endpoint mode requires the public key', () => {
-  const { DISCORD_PUBLIC_KEY, ...env } = { ...base, DISCORD_GATEWAY: 'false' };
-  assert.throws(() => loadConfig(env), /DISCORD_PUBLIC_KEY/);
-  const config = loadConfig({ ...base, DISCORD_GATEWAY: 'false' });
-  assert.equal(config.useGateway, false);
-  assert.equal(config.discordPublicKey, 'pk');
-});
 
 test('missing core env vars throw', () => {
   assert.throws(() => loadConfig({}), /DISCORD_TOKEN/);
+  assert.throws(() => loadConfig({ DISCORD_TOKEN: 't' }), /DISCORD_APPLICATION_ID/);
+  assert.throws(() => loadConfig({ DISCORD_TOKEN: 't', DISCORD_APPLICATION_ID: 'a' }), /DISCORD_OWNER_ID/);
+});
+
+test('loads defaults (no public key or gateway env vars needed)', () => {
+  const config = loadConfig(base);
+  assert.equal(config.discordToken, 't');
+  assert.equal(config.discordApplicationId, 'a');
+  assert.equal(config.discordOwnerId, 'o');
+  assert.equal(config.discordGuildId, null);
+  assert.equal(config.port, 3000);
+  assert.equal(config.basePort, 38281);
+  assert.equal(config.hintsEnabled, true);
+  assert.equal(config.publicHost, 'localhost');
+  assert.equal(config.maxAttachmentBytes, 25 * 1024 * 1024);
+});
+
+test('env overrides are applied', () => {
+  const config = loadConfig({
+    ...base,
+    DISCORD_GUILD_ID: 'g1',
+    PORT: '4000',
+    BASE_PORT: '39000',
+    HINTS_ENABLED: 'false',
+    AP_SERVER_HOST: 'ap.example.com',
+    MAX_ATTACHMENT_MB: '5',
+  });
+  assert.equal(config.discordGuildId, 'g1');
+  assert.equal(config.port, 4000);
+  assert.equal(config.basePort, 39000);
+  assert.equal(config.hintsEnabled, false);
+  assert.equal(config.publicHost, 'ap.example.com');
+  assert.equal(config.maxAttachmentBytes, 5 * 1024 * 1024);
 });
