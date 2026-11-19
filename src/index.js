@@ -71,8 +71,8 @@ async function main() {
   const db = new Store(path.join(config.dataDir, 'db.json'));
   await restartRunningGames(config, db);
   const client = createDiscordClient({ config, db });
-  client.once(Events.ClientReady, () => {
-    scheduleCommandRegistration(config, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });
+  client.once(Events.ClientReady, (readyClient) => {
+    scheduleCommandRegistration(readyClient, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });
   });
   createHealthServer(config);
   await client.login(config.discordToken);

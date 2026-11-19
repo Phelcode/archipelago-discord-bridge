@@ -123,45 +123,7 @@ export function guildCommandPayload(definitions) {
   return definitions.map((def) => ({ ...def, integration_types: [0], contexts: [0] }));
 }
 
-const API_BASE = 'https://discord.com/api/v10';
 
-class RateLimitError extends Error {
-  constructor(retryAfterMs) {
-    super(`rate limited, retry_after ${Math.round(retryAfterMs / 1000)}s`);
-    this.retryAfterMs = retryAfterMs;
-  }
-}
-
-// Registration uses plain fetch with an explicit timeout instead of the
-// discord.js REST queue: the library silently waits out rate limits and
-// retries aborted requests (15s x 4) with no log output, which made a stuck
-// registration indistinguishable from a working one. Here every step is
-// logged and bounded. Short 429s are waited out inline; long ones (bulk
-// command PUTs can be limited for minutes) throw RateLimitError so the
-// scheduler retries later instead of blocking.
-async function apiFetch(config, method, path, body, timeoutMs = 10000, maxInline429Ms = 30000) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: { Authorization: `Bot ${config.discordToken}`, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (res.status === 429) {
-    const data = await res.json().catch(() => ({}));
-    const waitMs = Math.max(0, (data.retry_after ?? 1)) * 1000;
-    if (waitMs > maxInline429Ms) throw new RateLimitError(waitMs);
-    console.warn(`[commands] 429 on ${method} ${path}, waiting ${waitMs}ms as Discord asks`);
-    await new Promise((r) => setTimeout(r, waitMs));
-    return apiFetch(config, method, path, body, timeoutMs, maxInline429Ms);
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Discord API ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
-  }
-  return res.status === 204 ? null : res.json();
-}
-
-// Compare only the fields we control; API responses carry extra metadata
 // (id, version, localizations, ...) that must not trigger a re-PUT.
 function canonicalOption(opt) {
   const c = { name: opt.name, description: opt.description, type: opt.type, required: Boolean(opt.required) };
@@ -182,98 +144,81 @@ function canonicalCommand(def) {
 }
 
 function sameCommands(existing, desired) {
-  if (!Array.isArray(existing) || existing.length !== desired.length) return false;
-  const sort = (list) => [...list].map(canonicalCommand).sort((a, b) => a.name.localeCompare(b.name));
-  return JSON.stringify(sort(existing)) === JSON.stringify(sort(desired));
+  const list = existing instanceof Map ? [...existing.values()] : existing; // discord.js Collections are Maps
+  if (!Array.isArray(list) || list.length !== desired.length) return false;
+  const sort = (l) => [...l].map(canonicalCommand).sort((a, b) => a.name.localeCompare(b.name));
+  return JSON.stringify(sort(list)) === JSON.stringify(sort(desired));
 }
 
 // PUT commands replaces the whole list server-side (clears stale + registers
 // current, atomically), but bulk-overwriting application commands is heavily
 // rate-limited by Discord — so only PUT when the registered set differs.
-async function putCommandsIfChanged(config, path, payload, label, maxInline429Ms) {
-  let current = null;
-  try {
-    current = await apiFetch(config, 'GET', path, undefined, 10000, maxInline429Ms);
-  } catch (err) {
-    console.warn(`[commands] could not read current ${label} commands (${err.message}); re-registering`);
-  }
-  if (current !== null && sameCommands(current, payload)) {
-    console.log(`[commands] ${label} commands already up to date (${payload.length}), skipping PUT`);
-    return;
-  }
-  await apiFetch(config, 'PUT', path, payload, 10000, maxInline429Ms);
-  console.log(`[commands] registered ${payload.length} ${label} commands.`);
-}
 
-export async function registerAllCommands(config, { guildIds = [], definitions, retryDelayMs = 5000, maxInline429Ms = 30000 }) {
+
+// Registration goes through discord.js's REST layer, which handles 429
+// cooldowns and retries itself. Bulk-overwriting application commands is
+// heavily rate-limited, so fetch the current set first and only PUT when it
+// differs. Every step is logged so a slow registration is never silent.
+export async function registerAllCommands(client, { guildIds = [], definitions }) {
   try {
-    await apiFetch(config, 'PATCH', '/applications/@me', { integration_types: INTEGRATION_TYPES_BOTH });
+    await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
     console.log('[commands] integration types set to guild + user install');
   } catch (err) {
     console.warn(`[commands] could not set integration_types (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
   const globalPayload = globalCommandPayload(definitions);
-  const globalPath = `/applications/${config.discordApplicationId}/commands`;
   console.log(`[commands] checking/registering ${definitions.length} global commands...`);
+  let current = null;
   try {
-    await putCommandsIfChanged(config, globalPath, globalPayload, 'global', maxInline429Ms);
+    current = await client.application.commands.fetch();
   } catch (err) {
-    if (err instanceof RateLimitError) {
-      console.warn(`[commands] global command PUT ${err.message}; scheduler will wait out the cooldown`);
-      throw err;
-    }
-    console.warn(`[commands] global registration failed (${err.message}); retrying once in ${retryDelayMs}ms...`);
-    await new Promise((r) => setTimeout(r, retryDelayMs));
-    await putCommandsIfChanged(config, globalPath, globalPayload, 'global', maxInline429Ms); // throws if still failing
+    console.warn(`[commands] could not read current global commands (${err.message}); re-registering`);
+  }
+  if (current && sameCommands(current, globalPayload)) {
+    console.log(`[commands] global commands already up to date (${definitions.length}), skipping PUT`);
+  } else {
+    await client.application.commands.set(globalPayload);
+    console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
   }
   for (const guildId of guildIds) {
-    const guildPath = `/applications/${config.discordApplicationId}/guilds/${guildId}/commands`;
     try {
-      await putCommandsIfChanged(config, guildPath, guildCommandPayload(definitions), `guild ${guildId}`, maxInline429Ms);
+      const guild = await client.guilds.fetch(guildId);
+      const payload = guildCommandPayload(definitions);
+      let cur = null;
+      try {
+        cur = await guild.commands.fetch();
+      } catch { cur = null; }
+      if (cur && sameCommands(cur, payload)) {
+        console.log(`[commands] guild ${guildId} commands already up to date, skipping PUT`);
+        continue;
+      }
+      await guild.commands.set(payload);
+      console.log(`[commands] registered ${definitions.length} commands in guild ${guildId} (instant there).`);
     } catch (err) {
-      // Typically 403 Missing Access when the app isn't in that guild with the
-      // bot + applications.commands scopes. Global commands still apply.
       console.warn(`[commands] guild registration in ${guildId} failed (${err.message}); add the app to that guild with the bot + applications.commands scopes for instant guild commands. Global commands still apply.`);
     }
   }
 }
 
-// Registers commands when called (on client ready) and retries every
-// intervalMs until it succeeds, so a transient failure can't leave the app
-// without slash commands. Returns a stop function.
-// Delay before the next registration attempt. After a 429 cooldown we wait
-// until the first interval tick AFTER the cooldown ends — retrying exactly at
-// retry_after often still 429s, because Discord's rate-limit windows reset on
-// coarse wall-clock boundaries, not precisely at retry_after.
-export function nextRetryDelay(notBefore, now, intervalMs) {
-  const remaining = notBefore - now;
-  return remaining > 0 ? Math.max(intervalMs, Math.ceil(remaining / intervalMs) * intervalMs) : intervalMs;
-}
-
-export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 } = {}) {
+// Retries on its own unref'd timer until registration succeeds, so a failed
+// attempt never leaves the app commandless and never delays other timers.
+export function scheduleCommandRegistration(client, opts, { intervalMs = 60000 } = {}) {
   let stopped = false;
   let timer = null;
-  let notBefore = 0; // earliest next attempt; set from 429 retry_after so we never hammer a rate-limited route
   const attempt = async () => {
     try {
-      await registerAllCommands(config, opts);
+      await registerAllCommands(client, opts);
       return true;
     } catch (err) {
-      if (err instanceof RateLimitError) {
-        notBefore = Date.now() + err.retryAfterMs;
-        console.error(`[commands] registration ${err.message}; next attempt no earlier than ${new Date(notBefore).toISOString()}`);
-      } else {
-        console.error('[commands] registration failed:', err.message);
-      }
+      console.error('[commands] registration failed:', err.message);
       return false;
     }
   };
-  // Own unref'd timer chain — a long cooldown never delays any other timer.
   const loop = async () => {
     if (stopped) return;
     const ok = await attempt();
     if (ok || stopped) return;
-    timer = setTimeout(loop, nextRetryDelay(notBefore, Date.now(), intervalMs));
+    timer = setTimeout(loop, intervalMs);
     if (timer.unref) timer.unref();
   };
   console.log('[commands] registering slash commands...');
@@ -283,6 +228,7 @@ export function scheduleCommandRegistration(config, opts, { intervalMs = 60000 }
     if (timer) clearTimeout(timer);
   };
 }
+
 
 export const PERMISSIONS = {
   commands: 'all',
