@@ -608,31 +608,46 @@ function mockClient({ failGuild = false, failAppEdit = false } = {}) {
   return { client, calls };
 }
 
-test('registerAllCommands clears old commands, then re-adds global (+guild) commands', async () => {
+test('registerAllCommands registers global commands (full replace) plus guild commands for each guild id', async () => {
   const { client, calls } = mockClient();
-  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
+  await registerAllCommands(client, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
   assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  // clears first so nothing stays registered twice / stale commands disappear
-  assert.deepEqual(calls[1], ['global', []]);
-  assert.deepEqual(calls[2], ['guild', 'g1', []]);
-  // then re-adds: guild commands, then global
+  // global set is a full server-side replace (clears stale + re-adds, no gap)
+  assert.equal(calls[1][0], 'global');
+  assert.equal(calls[1][1][0].integration_types[1], 1);
+  assert.deepEqual(calls[1][1][0].contexts, [0, 1, 2]);
+  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // no separate clear call
+  assert.equal(calls[2][0], 'guild');
+  assert.equal(calls[2][1], 'g1');
+  assert.deepEqual(calls[2][2][0].integration_types, [0]);
   assert.equal(calls[3][0], 'guild');
-  assert.equal(calls[3][1], 'g1');
-  assert.deepEqual(calls[3][2][0].integration_types, [0]);
-  assert.equal(calls[4][0], 'global');
-  assert.equal(calls[4][1][0].integration_types[1], 1);
-  assert.deepEqual(calls[4][1][0].contexts, [0, 1, 2]);
+  assert.equal(calls[3][1], 'g2');
 
   const second = mockClient();
-  await registerAllCommands(second.client, { guildId: null, definitions: COMMAND_DEFINITIONS });
+  await registerAllCommands(second.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
   assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.deepEqual(second.calls[1], ['global', []]);
-  assert.equal(second.calls.filter((c) => c[0] === 'global' && c[1].length > 0).length, 1);
+  assert.equal(second.calls.filter((c) => c[0] === 'global').length, 1);
+});
+
+test('registerAllCommands retries a failed global registration once, then throws if still failing', async () => {
+  const { client, calls } = mockClient();
+  let n = 0;
+  const origSet = client.application.commands.set;
+  client.application.commands.set = async (defs) => { n += 1; if (n === 1) throw new Error('500'); return origSet(defs); };
+  await registerAllCommands(client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 });
+  assert.equal(calls.filter((c) => c[0] === 'global').length, 1); // succeeded on retry
+
+  const failing = mockClient();
+  failing.client.application.commands.set = async () => { throw new Error('500'); };
+  await assert.rejects(
+    () => registerAllCommands(failing.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }),
+    /500/,
+  );
 });
 
 test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {
   const { client } = mockClient({ failAppEdit: true, failGuild: true });
-  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS }); // must not throw
+  await registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
   const noGuild = mockClient({ failGuild: true });
-  await registerAllCommands(noGuild.client, { guildId: null, definitions: COMMAND_DEFINITIONS }); // must not throw
+  await registerAllCommands(noGuild.client, { guildIds: [], definitions: COMMAND_DEFINITIONS, retryDelayMs: 1 }); // must not throw
 });

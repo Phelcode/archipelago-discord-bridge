@@ -54,14 +54,18 @@ Roles are assigned by Discord ID:
      option in their DM list / the app's profile to install it to their account.
    - Commands are registered for both installation types and all interaction
      contexts (guild channels, the app DM, and other DMs/group DMs for user
-     installs) — globally, and additionally as guild commands in `DISCORD_GUILD_ID`
-     (if set) so changes show up instantly in your server.
+     installs) — globally, and additionally as guild commands in each guild in
+     `DISCORD_GUILD_ID` (comma-separated for several; if set) so changes show up
+     instantly there. `DISCORD_GUILD_ID` only affects where guild commands are
+     registered — it does **not** restrict where the app answers; DMs and other
+     guilds work regardless.
    - Add the app to your server with the `bot applications.commands` scopes (the bot
      user joins; the app only answers interactions and needs no channel permissions),
      and/or to your user with `applications.commands`.
-   - Note: if `DISCORD_GUILD_ID` is set, interactions are only accepted from that
-     guild — user-install DMs (which have no guild) are then rejected too, so leave
-     it unset if you want the app usable in DMs.
+   - If guild registration in a `DISCORD_GUILD_ID` guild fails (usually 403
+     Missing Access), the boot log says so and tells you to add the app to that
+     guild with the bot + `applications.commands` scopes; global commands are
+     registered regardless (they propagate to all contexts within ~1h).
 2. Copy `.env.example` to `.env` and fill in `DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`,
    `DISCORD_OWNER_ID` (your Discord user ID) and
    `AP_SERVER_HOST` (the public hostname players use to reach Archipelago servers).

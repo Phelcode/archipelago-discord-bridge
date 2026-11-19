@@ -123,28 +123,36 @@ export function guildCommandPayload(definitions) {
   return definitions.map((def) => ({ ...def, integration_types: [0], contexts: [0] }));
 }
 
-export async function registerAllCommands(client, { guildId, definitions }) {
+export async function registerAllCommands(client, { guildIds = [], definitions, retryDelayMs = 5000 }) {
   try {
     await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
   } catch (err) {
     console.warn(`Could not set integration_types on the application via API (${err.message}); enable Guild + User install in the dev portal if needed.`);
   }
-  // Clear existing global and guild commands, then re-add the current set
-  // (avoids duplicates and stale entries).
-  await client.application.commands.set([]);
-  if (guildId) {
+  // PUT commands replaces the whole list server-side, so a single set both
+  // clears stale commands and registers the current set — no window in which
+  // zero commands are registered. Global first, with one retry, so a transient
+  // failure can't leave the app commandless.
+  const globalPayload = globalCommandPayload(definitions);
+  try {
+    await client.application.commands.set(globalPayload);
+  } catch (err) {
+    console.warn(`Global command registration failed (${err.message}); retrying once in ${retryDelayMs}ms...`);
+    await new Promise((r) => setTimeout(r, retryDelayMs));
+    await client.application.commands.set(globalPayload); // throws if still failing
+  }
+  console.log(`Registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
+  for (const guildId of guildIds) {
     try {
       const guild = await client.guilds.fetch(guildId);
-      await guild.commands.set([]);
       await guild.commands.set(guildCommandPayload(definitions));
+      console.log(`Registered ${definitions.length} commands in guild ${guildId} (instant there).`);
     } catch (err) {
-      // Common when the app isn't installed in that guild with the bot scope
-      // (403 Missing Access). Global commands are still registered below and
-      // propagate within ~1h, so this is a warning, not a failure.
-      console.warn(`Guild command registration in ${guildId} failed (${err.message}). Global commands are registered; add the app to that guild with the bot scope for instant guild commands.`);
+      // Typically 403 Missing Access when the app isn't in that guild with the
+      // bot + applications.commands scopes. Global commands still apply.
+      console.warn(`Guild command registration in ${guildId} failed (${err.message}). Global commands are registered (propagate within ~1h); add the app to that guild with the bot and applications.commands scopes for instant guild commands.`);
     }
   }
-  await client.application.commands.set(globalCommandPayload(definitions));
 }
 
 export const PERMISSIONS = {

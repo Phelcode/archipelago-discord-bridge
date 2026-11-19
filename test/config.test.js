@@ -19,7 +19,7 @@ test('loads defaults (no public key or gateway env vars needed)', () => {
   assert.equal(config.discordToken, 't');
   assert.equal(config.discordApplicationId, 'a');
   assert.equal(config.discordOwnerId, 'o');
-  assert.equal(config.discordGuildId, null);
+  assert.deepEqual(config.discordGuildIds, []);
   assert.equal(config.port, 3000);
   assert.equal(config.basePort, 38281);
   assert.equal(config.hintsEnabled, true);
@@ -31,14 +31,14 @@ test('loads defaults (no public key or gateway env vars needed)', () => {
 test('env overrides are applied', () => {
   const config = loadConfig({
     ...base,
-    DISCORD_GUILD_ID: 'g1',
+    DISCORD_GUILD_ID: 'g1, g2 ',
     PORT: '4000',
     BASE_PORT: '39000',
     HINTS_ENABLED: 'false',
     AP_SERVER_HOST: 'ap.example.com',
     MAX_ATTACHMENT_MB: '5',
   });
-  assert.equal(config.discordGuildId, 'g1');
+  assert.deepEqual(config.discordGuildIds, ['g1', 'g2']);
   assert.equal(config.port, 4000);
   assert.equal(config.basePort, 39000);
   assert.equal(config.hintsEnabled, false);

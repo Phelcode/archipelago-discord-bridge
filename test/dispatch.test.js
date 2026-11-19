@@ -83,14 +83,13 @@ test('chunkContent splits long messages on newlines under the limit', () => {
   assert.deepEqual(chunkContent('short'), ['short']);
 });
 
-test('interactions from a foreign guild are rejected when DISCORD_GUILD_ID is set', async () => {
-  const { dispatch } = setup({ config: { discordGuildId: 'guild-1' } });
-  const { interaction, calls } = chat('help', { guildId: 'other-guild' });
+test('DM interactions (no guild) are accepted even when DISCORD_GUILD_ID is configured', async () => {
+  const { dispatch } = setup({ config: { discordGuildIds: ['guild-1'] } });
+  const { interaction, calls } = chat('commands', { guildId: null });
   await dispatch(interaction);
-  assert.equal(calls.reply.length, 1);
-  assert.equal(calls.reply[0].flags, 64); // MessageFlags.Ephemeral
-  assert.match(calls.reply[0].content, /restricted to a specific server/);
-  assert.equal(calls.deferReply.length, 0);
+  assert.equal(calls.reply.length, 0);
+  assert.deepEqual(calls.deferReply, [{}]);
+  assert.match(calls.editReply[0], /\*\*Commands\*\*/);
 });
 
 test('owner-only commands are denied for non-owners', async () => {

@@ -73,7 +73,7 @@ async function main() {
   const client = createDiscordClient({ config, db });
   client.once(Events.ClientReady, async (readyClient) => {
     try {
-      await registerAllCommands(readyClient, { guildId: config.discordGuildId, definitions: COMMAND_DEFINITIONS });
+      await registerAllCommands(readyClient, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });
       console.log(`Registered ${COMMAND_DEFINITIONS.length} slash commands with Discord (guild + user install).`);
     } catch (err) {
       console.error('Could not register slash commands with Discord (set installation contexts and commands in the dev portal if needed):', err.message);
