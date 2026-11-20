@@ -193,26 +193,44 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
   }
   let stopped = false;
   let timer = null;
-  // Returns 0 on success, else the ms to wait before the next attempt. On a
-  // 429 the cooldown is waited out (rounded up to the next interval tick) —
-  // retrying every tick into a multi-hour window just hammers the route.
+  // notBefore: persisted across restarts. Hitting a rate-limited route during
+  // its cooldown extends the window, so after a 429 we make ZERO calls until
+  // the cooldown has fully elapsed (plus one interval tick of slack, since
+  // network timing is never exact) — even across container restarts.
+  let notBefore = state.notBefore || 0;
+  const saveState = (extra) => {
+    try {
+      fs.mkdirSync(config.dataDir, { recursive: true });
+      fs.writeFileSync(registrationStateFile(config), JSON.stringify({ ...state, ...extra }));
+    } catch { /* best effort */ }
+  };
+  // Returns 0 on success, else the ms to wait before the next attempt.
   const attempt = async () => {
     try {
       await registerAllCommands(client, opts);
-      try {
-        fs.mkdirSync(config.dataDir, { recursive: true });
-        fs.writeFileSync(registrationStateFile(config), JSON.stringify({ hash, lastSuccessAt: Date.now() }));
-      } catch { /* best effort */ }
+      saveState({ hash, lastSuccessAt: Date.now(), notBefore: 0 });
       return 0;
     } catch (err) {
       const retryAfterMs = typeof err?.retryAfter === 'number' ? err.retryAfter * 1000 : 0;
-      const wait = retryAfterMs > 0 ? Math.max(intervalMs, Math.ceil(retryAfterMs / intervalMs) * intervalMs) : intervalMs;
-      console.error(`[commands] registration failed: ${fmtErr(err)}; retrying in ${Math.round(wait / 1000)}s`);
+      if (retryAfterMs > 0) {
+        notBefore = Date.now() + retryAfterMs + intervalMs;
+        saveState({ notBefore });
+      }
+      const remaining = notBefore - Date.now();
+      const wait = remaining > 0 ? Math.ceil(remaining / intervalMs) * intervalMs : intervalMs;
+      console.error(`[commands] registration failed: ${fmtErr(err)}; next attempt at ${new Date(Date.now() + wait).toISOString()}`);
       return wait;
     }
   };
+  const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.unref) t.unref(); });
   const loop = async () => {
     if (stopped) return;
+    const pending = notBefore - Date.now();
+    if (pending > 0) {
+      console.log(`[commands] previous attempt was rate-limited; waiting ${Math.round(pending / 1000)}s before the next try`);
+      await sleep(Math.ceil(pending / intervalMs) * intervalMs);
+      if (stopped) return;
+    }
     const wait = await attempt();
     if (!wait || stopped) return;
     timer = setTimeout(loop, wait);

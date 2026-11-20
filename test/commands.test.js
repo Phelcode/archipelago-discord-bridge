@@ -732,3 +732,32 @@ test('scheduler waits out a 429 cooldown (rounded to the next tick) instead of r
   assert.equal(n, 2);
   assert.ok(Date.now() - start >= 150, `should have waited ~200ms for the cooldown, took ${Date.now() - start}ms`);
 });
+
+test('a cooldown left by a previous run is persisted and honored across restarts (no API call during cooldown)', async () => {
+  const config = tmpConfig();
+  const notBefore = Date.now() + 300;
+  fs.writeFileSync(path.join(config.dataDir, 'commands-state.json'), JSON.stringify({ notBefore })); // no hash -> not a success skip
+  const { client, calls } = mockClient();
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(calls.length, 0, 'no API calls while the persisted cooldown is still running');
+  await new Promise((r) => setTimeout(r, 400));
+  stop();
+  assert.ok(calls.length > 0, 'attempt happened after the cooldown');
+});
+
+test('a 429 persists notBefore into commands-state.json', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  client.application.commands.set = async () => {
+    const err = new Error();
+    err.name = 'RateLimitError[/applications/app-1/commands]';
+    err.retryAfter = 0.2;
+    throw err;
+  };
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 100));
+  stop();
+  const state = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'commands-state.json'), 'utf8'));
+  assert.ok(state.notBefore > Date.now(), 'cooldown persisted');
+});
