@@ -129,26 +129,41 @@ export function guildCommandPayload(definitions) {
 // (clears stale + registers current, atomically) — and the command routes are
 // heavily rate-limited, so the scheduler only calls this when the persisted
 // hash shows the command set changed. Every step is logged.
+function fmtErr(err) {
+  const base = err?.message || err?.name || String(err);
+  return typeof err?.retryAfter === 'number' ? `${base}, retry_after ${err.retryAfter}s` : base;
+}
+
 export async function registerAllCommands(client, { guildIds = [], definitions }) {
   try {
     await client.application.edit({ integration_types: INTEGRATION_TYPES_BOTH });
     console.log('[commands] integration types set to guild + user install');
   } catch (err) {
-    console.warn(`[commands] could not set integration_types (${err.message}); enable Guild + User install in the dev portal if needed.`);
+    console.warn(`[commands] could not set integration_types (${fmtErr(err)}); enable Guild + User install in the dev portal if needed.`);
   }
-  const globalPayload = globalCommandPayload(definitions);
+  // A global PUT failure must not block guild registration: guild command
+  // routes have their own, generous rate-limit buckets and are the instant
+  // path. The global error is rethrown after the guild loop so the scheduler
+  // keeps retrying it.
+  let globalError = null;
   console.log(`[commands] registering ${definitions.length} global commands...`);
-  await client.application.commands.set(globalPayload);
-  console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
+  try {
+    await client.application.commands.set(globalCommandPayload(definitions));
+    console.log(`[commands] registered ${definitions.length} global commands (guild + user install, all contexts incl. DMs).`);
+  } catch (err) {
+    globalError = err;
+    console.error(`[commands] global PUT failed: ${fmtErr(err)}`);
+  }
   for (const guildId of guildIds) {
     try {
       const guild = await client.guilds.fetch(guildId);
       await guild.commands.set(guildCommandPayload(definitions));
       console.log(`[commands] registered ${definitions.length} commands in guild ${guildId} (instant there).`);
     } catch (err) {
-      console.warn(`[commands] guild registration in ${guildId} failed (${err.message}); add the app to that guild with the bot + applications.commands scopes for instant guild commands. Global commands still apply.`);
+      console.warn(`[commands] guild registration in ${guildId} failed (${fmtErr(err)}); add the app to that guild with the bot + applications.commands scopes for instant guild commands. Global commands still apply.`);
     }
   }
+  if (globalError) throw globalError;
 }
 
 export function payloadHash(definitions, guildIds) {
@@ -178,6 +193,9 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
   }
   let stopped = false;
   let timer = null;
+  // Returns 0 on success, else the ms to wait before the next attempt. On a
+  // 429 the cooldown is waited out (rounded up to the next interval tick) —
+  // retrying every tick into a multi-hour window just hammers the route.
   const attempt = async () => {
     try {
       await registerAllCommands(client, opts);
@@ -185,20 +203,19 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
         fs.mkdirSync(config.dataDir, { recursive: true });
         fs.writeFileSync(registrationStateFile(config), JSON.stringify({ hash, lastSuccessAt: Date.now() }));
       } catch { /* best effort */ }
-      return true;
+      return 0;
     } catch (err) {
-      // @discordjs/rest's RateLimitError has an empty message; the useful
-      // parts are err.name (RateLimitError[<route>]) and err.retryAfter.
-      const retryAfter = err && typeof err.retryAfter === 'number' ? `, retry_after ${err.retryAfter}s` : '';
-      console.error(`[commands] registration failed: ${err?.message || err?.name || err}${retryAfter} (retrying in ${intervalMs}ms)`);
-      return false;
+      const retryAfterMs = typeof err?.retryAfter === 'number' ? err.retryAfter * 1000 : 0;
+      const wait = retryAfterMs > 0 ? Math.max(intervalMs, Math.ceil(retryAfterMs / intervalMs) * intervalMs) : intervalMs;
+      console.error(`[commands] registration failed: ${fmtErr(err)}; retrying in ${Math.round(wait / 1000)}s`);
+      return wait;
     }
   };
   const loop = async () => {
     if (stopped) return;
-    const ok = await attempt();
-    if (ok || stopped) return;
-    timer = setTimeout(loop, intervalMs);
+    const wait = await attempt();
+    if (!wait || stopped) return;
+    timer = setTimeout(loop, wait);
     if (timer.unref) timer.unref();
   };
   console.log('[commands] registering slash commands...');

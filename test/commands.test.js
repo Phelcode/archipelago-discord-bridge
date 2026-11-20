@@ -698,3 +698,37 @@ test('rate-limit failures are logged with route and retry_after (RateLimitError 
   }
   assert.ok(logs.some((l) => l.includes('RateLimitError[/applications/app-1/commands]') && l.includes('retry_after 7s')), logs.join(' | '));
 });
+
+test('a failed global PUT does not block guild registration and is rethrown', async () => {
+  const { client, calls } = mockClient();
+  const rlErr = new Error();
+  rlErr.name = 'RateLimitError[/applications/app-1/commands]';
+  rlErr.retryAfter = 30050;
+  client.application.commands.set = async () => { throw rlErr; };
+  await assert.rejects(
+    () => registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS }),
+    (err) => err === rlErr,
+  );
+  assert.ok(calls.some((c) => c[0] === 'set' && c[1] === 'guild:g1'), 'guild PUT still happened');
+});
+
+test('scheduler waits out a 429 cooldown (rounded to the next tick) instead of retrying every tick', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  let n = 0;
+  client.application.commands.set = async () => {
+    n += 1;
+    if (n === 1) {
+      const err = new Error();
+      err.name = 'RateLimitError[/applications/app-1/commands]';
+      err.retryAfter = 0.2; // 200ms cooldown; intervalMs 50 -> wait 200ms (next tick after cooldown)
+      throw err;
+    }
+  };
+  const start = Date.now();
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 500));
+  stop();
+  assert.equal(n, 2);
+  assert.ok(Date.now() - start >= 150, `should have waited ~200ms for the cooldown, took ${Date.now() - start}ms`);
+});
