@@ -121,6 +121,40 @@ class SlotConns:
             await self.drop(name)
 
 
+async def run_overview(sc: SlotConns, timeout, known_slots, only, player_slots):
+    """Single-connection monitor: room info plus every slot's hints and client
+    status (datastorage Get keys are globally readable). Per-slot check counts
+    are NOT available this way — those need one connection per slot."""
+    own_name = known_slots[0] if known_slots else next(iter(player_slots.values()))["name"]
+    if only:
+        own_name = next(iter(only))
+    ws, conn = await sc.get(own_name, False)
+    games = sc.room.get("games", [])
+    keys = []
+    for slot in player_slots:
+        keys += [f"_read_hints_0_{slot}", f"_read_client_status_0_{slot}"]
+    await ws.send(json.dumps([{"cmd": "GetDataPackage", "games": games}]))
+    await ws.send(json.dumps([{"cmd": "Get", "keys": keys}]))
+    got = await recv_until(ws, {"DataPackage", "Retrieved"}, timeout)
+    package = got["DataPackage"]["data"]["games"]
+    retrieved = got["Retrieved"]["keys"]
+    own_slot = conn.get("slot")
+    results = {}
+    for slot, info in sorted(player_slots.items()):
+        results[slot] = {
+            "slot": slot,
+            "name": info.get("name", str(slot)),
+            "game": info.get("game", ""),
+            "checked": conn.get("checked_locations", []) if slot == own_slot else [],
+            "missing": conn.get("missing_locations", []) if slot == own_slot else [],
+            "hint_points": conn.get("hint_points", 0) if slot == own_slot else None,
+            "status": retrieved.get(f"_read_client_status_0_{slot}", 0),
+            "hints": retrieved.get(f"_read_hints_0_{slot}", []),
+            "received": [],
+        }
+    return build_output(sc, games, results, "overview", None, package)
+
+
 async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_slots=()):
     if sc.room is None:
         # need at least one connection to learn the room/slot layout
@@ -137,6 +171,9 @@ async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_sl
         player_slots = {s: info for s, info in player_slots.items() if info.get("name") in only}
     if not player_slots:
         raise RuntimeError("server reports no player slots")
+
+    if mode == "overview":
+        return await run_overview(sc, timeout, known_slots, only, player_slots)
 
     games = sc.room.get("games", [])
     results = {}
@@ -175,6 +212,10 @@ async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_sl
             await sc.drop(name)  # reconnect fresh next time
             raise
 
+    return build_output(sc, games, results, mode, want_slot, package)
+
+
+def build_output(sc, games, results, mode, want_slot, package):
     def loc_name(game, loc_id):
         game_pkg = (package or {}).get(game, {})
         names = game_pkg.get("location_name_to_id", {})
@@ -273,7 +314,7 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--password", default=None)
     parser.add_argument("--slots", default="", help="comma-separated known slot names")
-    parser.add_argument("--mode", choices=["stats", "hints", "received"], default="stats")
+    parser.add_argument("--mode", choices=["stats", "hints", "received", "overview"], default="stats")
     parser.add_argument("--slot", type=int, default=None)
     parser.add_argument("--only", default="", help="comma-separated slot names to connect as (others are skipped)")
     parser.add_argument("--ap-version", default="0.6.9")
