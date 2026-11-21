@@ -240,7 +240,7 @@ export function parseItemSends(logFile) {
   return sends;
 }
 
-export async function probe(config, game, mode, slot, timeoutMs, knownSlots) {
+export async function probe(config, game, mode, slot, timeoutMs, knownSlots, onlySlots) {
   const slots = knownSlots || [];
   const args = [
     config.apProbeScript,
@@ -252,6 +252,7 @@ export async function probe(config, game, mode, slot, timeoutMs, knownSlots) {
   ];
   if (game.password) args.push('--password', game.password);
   if (slots.length) args.push('--slots', slots.join(','));
+  if (onlySlots && onlySlots.length) args.push('--only', onlySlots.join(','));
   if (slot !== null && slot !== undefined) args.push('--slot', String(slot));
   const { stdout } = await runProcess(config, args, {
     env: { ...process.env, SKIP_REQUIREMENTS_UPDATE: '1' },

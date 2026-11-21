@@ -608,7 +608,9 @@ const handlers = {
     if (!player) throw new UserError('You must /register first.');
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
-    const probeResult = await ctx.ap.probe(ctx.config, game, 'received', null, 30000, gamePlayerSlots(ctx.db, game));
+    // Probe only our own slot: each slot connection makes the server broadcast
+    // a join/leave notice, so don't connect as every player for one command.
+    const probeResult = await ctx.ap.probe(ctx.config, game, 'received', null, 30000, [player.slot], [player.slot]);
     const me = probeResult.players.find((p) => p.name === player.slot);
     if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running game.`);
     const all = probeResult.received?.[me.slot] || [];

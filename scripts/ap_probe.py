@@ -76,7 +76,7 @@ async def connect_slot(uri, password, version, name, game, timeout, want_items=F
         raise
 
 
-async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
+async def probe(uri, password, version, known_slots, mode, want_slot, timeout, only=None):
     if not known_slots:
         raise RuntimeError("no known slot names supplied (--slots)")
     want_items = mode == "received"
@@ -84,6 +84,12 @@ async def probe(uri, password, version, known_slots, mode, want_slot, timeout):
     try:
         slot_info = {int(k): v for k, v in conn["slot_info"].items()}
         player_slots = {s: info for s, info in slot_info.items() if info.get("type") == 1}
+        if only:
+            # Connecting as a slot makes the server broadcast join/leave
+            # notices, so limit connections to the requested slots.
+            player_slots = {s: info for s, info in player_slots.items() if info.get("name") in only}
+            if known_slots[0] not in {i.get("name") for i in player_slots.values()} and player_slots:
+                known_slots = [next(iter(player_slots.values()))["name"]] + known_slots
         if not player_slots:
             raise RuntimeError("server reports no player slots")
         slot_name_by_id = {s: info.get("name", str(s)) for s, info in slot_info.items()}
@@ -204,15 +210,17 @@ def main():
     parser.add_argument("--slots", default="", help="comma-separated known slot names")
     parser.add_argument("--mode", choices=["stats", "hints", "received"], default="stats")
     parser.add_argument("--slot", type=int, default=None)
+    parser.add_argument("--only", default="", help="comma-separated slot names to connect as (others are skipped)")
     parser.add_argument("--ap-version", default="0.6.9")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
 
     uri = f"ws://{args.host}:{args.port}"
     known_slots = [s for s in args.slots.split(",") if s]
+    only = {s for s in args.only.split(",") if s} or None
     try:
         result = asyncio.run(probe(uri, args.password, version_dict(args.ap_version),
-                                    known_slots, args.mode, args.slot, args.timeout))
+                                    known_slots, args.mode, args.slot, args.timeout, only))
     except Exception as exc:
         print(f"probe failed: {exc}", file=sys.stderr)
         sys.exit(1)

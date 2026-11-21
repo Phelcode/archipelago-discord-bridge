@@ -57,17 +57,35 @@ test('blocked players get a DM for each new item; last-received index advances f
   assert.equal(dms.length, 1);
 });
 
-test('an unblocked recipient gets no DM but their own index still advances', async () => {
+test('games with no blocked players are not probed at all (no join/leave spam)', async () => {
   const { config, db } = makeEnv();
   db.setPlayer('u1', { slot: 'Alice', game: 'G' });
-  db.setPlayer('u2', { slot: 'Bob', game: 'G' });
-  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1', 'u2'] });
+  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1'] });
   const ap = apStub(RECEIVED);
   const dms = [];
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  assert.equal(dms.length, 0); // u1 is not blocked
-  assert.equal(db.getPreference('u1').lastReceivedIndex.g, 1); // recipient's index advanced
-  assert.equal(db.getPreference('u2').lastReceivedIndex, undefined); // non-recipient untouched
+  assert.equal(ap.calls.probe, 0, 'no probe when nobody is blocked');
+  assert.equal(dms.length, 0);
+  assert.equal(db.getPreference('u1').lastReceivedIndex, undefined); // /received scope:new advances it on demand
+});
+
+test('the watcher probes only the blocked players\' slots', async () => {
+  const { config, db } = makeEnv();
+  db.setPlayer('u1', { slot: 'Alice', game: 'G' });
+  db.setPlayer('u2', { slot: 'Bob', game: 'G' });
+  db.setPreference('u1', 'blocked', true);
+  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1', 'u2'] });
+  const seen = [];
+  const ap = apStub(RECEIVED);
+  const origProbe = ap.probe;
+  ap.probe = async (c, game, mode, slot, timeout, known, only) => {
+    seen.push({ known, only });
+    return origProbe(c, game, mode, slot, timeout, known);
+  };
+  await pollRunningGames(config, db, ap, async () => {});
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].known, ['Alice']);
+  assert.deepEqual(seen[0].only, ['Alice']);
 });
 
 test('non-running or dead games are skipped; probe failures are tolerated', async () => {
