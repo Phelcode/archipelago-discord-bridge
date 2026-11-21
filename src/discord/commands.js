@@ -20,7 +20,7 @@ const gameOption = (required) => ({
 export const COMMAND_DEFINITIONS = [
   { name: 'commands', description: 'List all commands with a one-line summary' },
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
-  { name: 'register', description: 'Register as a player (opens an upload form for your player yaml); add game: to join that session in one step', options: [gameOption(false)] },
+  { name: 'register', description: 'Register as a player (modal form for your .yaml); game: also joins that session', options: [gameOption(false)] },
   { name: 'unregister', description: 'Remove your player registration' },
   {
     name: 'profile',

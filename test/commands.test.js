@@ -803,3 +803,17 @@ test('(player, game) membership is unique; a player can join multiple games', as
   assert.match(out, /\(1\):/);
   assert.equal((out.match(/<@user-1>/g) || []).length, 1);
 });
+
+test('all command/option/choice names and descriptions fit Discord limits', () => {
+  // Discord rejects the whole PUT if any description exceeds 100 chars
+  const check = (d, path) => {
+    assert.ok(!d.name || d.name.length <= 32, `${path} name too long`);
+    assert.ok(d.description && d.description.length <= 100, `${path} description too long (${d.description?.length})`);
+    for (const o of d.options || []) {
+      assert.ok(o.description.length <= 100, `${path}.${o.name} option description too long (${o.description.length})`);
+      for (const c of o.choices || []) assert.ok(c.name.length <= 100, `${path}.${o.name} choice name too long`);
+      for (const so of o.options || []) assert.ok(so.description.length <= 100, `${path}.${o.name}.${so.name} too long`);
+    }
+  };
+  for (const d of COMMAND_DEFINITIONS) check(d, d.name);
+});
