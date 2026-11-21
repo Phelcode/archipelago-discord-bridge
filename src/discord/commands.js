@@ -19,7 +19,7 @@ const gameOption = (required) => ({
 export const COMMAND_DEFINITIONS = [
   { name: 'commands', description: 'List all commands with a one-line summary' },
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
-  { name: 'register', description: 'Register as a player (opens an upload form for your player yaml)', options: [] },
+  { name: 'register', description: 'Register as a player (opens an upload form for your player yaml); add game: to join that session in one step', options: [gameOption(false)] },
   { name: 'unregister', description: 'Remove your player registration' },
   {
     name: 'profile',
@@ -333,7 +333,7 @@ const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing',
 const COMMAND_SUMMARIES = {
   commands: 'List all commands with a one-line summary',
   help: 'Step-by-step intro for your role',
-  register: 'Register as a player (upload your .yaml in the form)',
+  register: 'Register as a player (upload your .yaml in the form); game: auto-joins that session',
   unregister: 'Remove your player registration',
   profile: 'Your role/registration; set private or public replies',
   join: 'Join a game session with your registered yaml',
@@ -369,6 +369,12 @@ function formatGameLine(ctx, g) {
 
 export function statusName(status) {
   return STATUS_NAMES[status] ?? `status ${status}`;
+}
+
+function joinGame(ctx, game) {
+  game.playerIds = game.playerIds || [];
+  if (!game.playerIds.includes(ctx.userId)) game.playerIds.push(ctx.userId);
+  ctx.db.setGame(game.name, game);
 }
 
 function resolveGame(ctx, name) {
@@ -533,13 +539,13 @@ const handlers = {
     } else if (ctx.db.getPlayer(ctx.userId)) {
       lines.push(
         '**Playing**',
-        '1. `/join game: <name>` — join a session (you are registered)',
-        '2. `/stats`, `/game-stats` — watch progress; `/hints` — your hints',
+        '1. `/register game: <name>` — upload your yaml and join in one step (or `/register`, then `/join game: <name>`)',
+        '2. `/stats`, `/game-stats` — watch progress; `/hints`, `/received` — your hints and items',
       );
     } else {
       lines.push(
         '**Spectating** — `/status`, `/stats`, `/game-stats`, `/players` work for everyone.',
-        'To play: `/register` (upload your player yaml in the form), then `/join game: <name>`.',
+        'To play: `/register game: <name>` (uploads your player yaml and joins in one step).',
       );
     }
     lines.push('', '`/commands` lists everything; `/profile` sets private vs public replies.');
@@ -547,6 +553,7 @@ const handlers = {
   },
 
   async register(ctx) {
+    const targetGame = ctx.options.game ? resolveGame(ctx, ctx.options.game) : null;
     const att = ctx.attachments.yaml || ctx.modal?.files?.yaml?.[0];
     if (!att) throw new UserError('Attach a .yaml file in the form.');
     if (!/\.ya?ml$/i.test(att.filename)) throw new UserError(`"${att.filename}" is not a .yaml file.`);
@@ -558,7 +565,9 @@ const handlers = {
     fs.mkdirSync(playersDir, { recursive: true });
     fs.writeFileSync(path.join(playersDir, `${ctx.userId}.yaml`), buffer);
     ctx.db.setPlayer(ctx.userId, { slot, game, registeredAt: new Date().toISOString() });
-    return `Registered as player **${slot}** (game: ${game}). Use /join to enter a game session.`;
+    if (!targetGame) return `Registered as player **${slot}** (game: ${game}). Use /join to enter a game session.`;
+    joinGame(ctx, targetGame);
+    return `Registered as player **${slot}** (game: ${game}) and joined session **${targetGame.name}**.`;
   },
 
   async unregister(ctx) {
@@ -646,9 +655,7 @@ const handlers = {
     const game = resolveGame(ctx, ctx.options.game);
     const player = ctx.db.getPlayer(ctx.userId);
     if (!player) throw new UserError('You must /register with your player yaml before joining a game.');
-    game.playerIds = game.playerIds || [];
-    if (!game.playerIds.includes(ctx.userId)) game.playerIds.push(ctx.userId);
-    ctx.db.setGame(game.name, game);
+    joinGame(ctx, game);
     return `Joined game **${game.name}** as slot **${player.slot}**.`;
   },
 

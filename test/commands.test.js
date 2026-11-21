@@ -452,9 +452,12 @@ test('form commands take no inline options and always open a modal', () => {
   };
   for (const [name, customId] of Object.entries(expectedModal)) {
     assert.ok(ALWAYS_MODAL[name], `${name} is always-modal`);
-    assert.deepEqual(byName[name].options, [], `${name} has no inline options`);
+    // form commands take no required inline options (register's optional game: is the exception)
+    const inlineOpts = (byName[name].options || []).filter((o) => o.required);
+    assert.deepEqual(inlineOpts, [], `${name} has no required inline options`);
     assert.equal(ALWAYS_MODAL[name]().toJSON().custom_id, customId);
   }
+  assert.deepEqual(byName.register.options.map((o) => o.name), ['game']);
   // required options must precede optional ones (Discord validation rule)
   for (const def of COMMAND_DEFINITIONS) {
     const opts = def.options || [];
@@ -760,4 +763,28 @@ test('a 429 persists notBefore into commands-state.json', async () => {
   stop();
   const state = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'commands-state.json'), 'utf8'));
   assert.ok(state.notBefore > Date.now(), 'cooldown persisted');
+});
+
+test('register with game: auto-joins the session; without it, no join', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const mk = (options) => makeCtx({
+    options,
+    attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  const ctx = mk({ game: 'test' });
+  ctx.db.setGame('test', { name: 'test', status: 'setup', playerIds: [] });
+  const out = await handleCommand('register', ctx);
+  assert.match(out, /joined session \*\*test\*\*/);
+  assert.deepEqual(ctx.db.getGame('test').playerIds, ['user-1']);
+
+  const ctx2 = mk({});
+  const out2 = await handleCommand('register', ctx2);
+  assert.match(out2, /Use \/join/);
+  assert.equal(ctx2.db.listGames().length, 0);
+
+  // unknown game fails before registering
+  const ctx3 = mk({ game: 'nope' });
+  await assert.rejects(() => handleCommand('register', ctx3), /Unknown game/);
+  assert.ok(!ctx3.db.getPlayer('user-1'));
 });
