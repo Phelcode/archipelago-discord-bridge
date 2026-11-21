@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, gameDir } from '../src/ap/manager.js';
+import { Store } from '../src/store.js';
 
 test('resolveSeed passes through an explicit seed', () => {
   assert.equal(resolveSeed(12345), 12345);
@@ -62,4 +63,17 @@ test('parseItemSends extracts timestamped item sends from a MultiServer log', ()
   assert.deepEqual(sends[0], { at: '2026-01-02 03:04:05,678', sender: 'Alice', item: 'Map Bombs', receiver: 'Bob', location: 'Tile 3' });
   assert.deepEqual(sends[1], { at: '2026-01-02 03:05:00,000', sender: 'Bob', item: 'Progressive Sword', receiver: 'Alice', location: 'Tile 1' });
   assert.deepEqual(parseItemSends(path.join(dir, 'missing.log')), []);
+});
+
+test('stagePlayers stages each (player, game) member once even with duplicate ids', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-stage-'));
+  const config = { dataDir, apDir: dataDir };
+  const db = new Store(path.join(dataDir, 'db.json'));
+  db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
+  fs.mkdirSync(path.join(dataDir, 'players'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'players', 'u1.yaml'), 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n');
+  const game = { name: 'g', playerIds: ['u1', 'u1'] };
+  const staged = stagePlayers(config, db, game);
+  assert.deepEqual(staged, ['Alice']);
+  assert.deepEqual(fs.readdirSync(path.join(gameDir(config, game), 'Players')), ['Alice.yaml']);
 });

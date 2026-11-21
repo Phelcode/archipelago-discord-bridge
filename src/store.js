@@ -3,6 +3,12 @@ import path from 'node:path';
 
 const EMPTY = () => ({ hosts: [], players: {}, games: {}, preferences: {} });
 
+// (player, game) memberships are unique: a Discord user appears at most once
+// per game, but may be in several games. Dedupe on read as well as on write.
+export function playerIdsOf(game) {
+  return [...new Set(game.playerIds || [])];
+}
+
 export class Store {
   constructor(file) {
     this.file = file;

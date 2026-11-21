@@ -1,3 +1,5 @@
+import { playerIdsOf } from './store.js';
+
 // Watches running games and DMs players who marked themselves "blocked"
 // when new items are sent to them. Only the recipient's stored last-received
 // index advances, which keeps /received (scope: new) accurate.
@@ -8,7 +10,7 @@
 export async function pollRunningGames(config, db, apImpl, notify) {
   for (const game of db.listGames()) {
     if (game.status !== 'running' || !apImpl.isServerProcessAlive(game)) continue;
-    const blocked = (game.playerIds || [])
+    const blocked = playerIdsOf(game)
       .map((id) => ({ id, player: db.getPlayer(id) }))
       .filter((x) => x.player && db.getPreference(x.id).blocked);
     if (!blocked.length) continue;

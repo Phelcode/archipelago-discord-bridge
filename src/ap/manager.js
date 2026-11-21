@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { playerIdsOf } from '../store.js';
 
 // Archipelago accepts seeds in [0, 10^20); we stay well inside safe-integer
 // range. A random seed is always picked explicitly when none is given.
@@ -105,7 +106,7 @@ export function stagePlayers(config, db, game) {
   fs.rmSync(playersDir, { recursive: true, force: true });
   fs.mkdirSync(playersDir, { recursive: true });
   const staged = [];
-  for (const userId of game.playerIds) {
+  for (const userId of playerIdsOf(game)) {
     const player = db.getPlayer(userId);
     if (!player) continue;
     const src = path.join(config.dataDir, 'players', `${userId}.yaml`);

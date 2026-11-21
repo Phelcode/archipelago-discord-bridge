@@ -4,6 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { ModalBuilder, LabelBuilder, FileUploadBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { roleOf, canHost, isOwner } from './permissions.js';
+import { playerIdsOf } from '../store.js';
 import * as ap from '../ap/manager.js';
 
 export class UserError extends Error {}
@@ -360,7 +361,7 @@ const ACTIVE_STATUSES = new Set(['setup', 'generating', 'generated', 'running'])
 
 function formatGameLine(ctx, g) {
   const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
-  const players = (g.playerIds || []).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
+  const players = playerIdsOf(g).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
   return [
     `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
     `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
@@ -428,7 +429,7 @@ async function ensureGenerated(ctx, game) {
 
 function gamePlayerSlots(db, game) {
   const slots = [];
-  for (const userId of game.playerIds || []) {
+  for (const userId of playerIdsOf(game)) {
     const player = db.getPlayer(userId);
     if (player) slots.push(player.slot);
   }
@@ -670,8 +671,8 @@ const handlers = {
     const blockedTag = (userId) => (ctx.db.getPreference(userId).blocked ? ' 🔒 blocked' : '');
     if (ctx.options.game) {
       const game = resolveGame(ctx, ctx.options.game);
-      const lines = [`**Players in "${game.name}" (${(game.playerIds || []).length}):**`];
-      for (const userId of game.playerIds || []) {
+      const lines = [`**Players in "${game.name}" (${playerIdsOf(game).length}):**`];
+      for (const userId of playerIdsOf(game)) {
         const p = ctx.db.getPlayer(userId);
         lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}`);
       }

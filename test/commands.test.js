@@ -788,3 +788,25 @@ test('register with game: auto-joins the session; without it, no join', async ()
   await assert.rejects(() => handleCommand('register', ctx3), /Unknown game/);
   assert.ok(!ctx3.db.getPlayer('user-1'));
 });
+
+test('(player, game) membership is unique; a player can join multiple games', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setGame('g1', { name: 'g1', status: 'setup', playerIds: [] });
+  ctx.db.setGame('g2', { name: 'g2', status: 'setup', playerIds: [] });
+  ctx.options = { game: 'g1' };
+  await handleCommand('join', ctx);
+  await handleCommand('join', ctx); // again -> still once
+  assert.deepEqual(ctx.db.getGame('g1').playerIds, ['user-1']);
+  ctx.options = { game: 'g2' };
+  await handleCommand('join', ctx);
+  assert.deepEqual(ctx.db.getGame('g2').playerIds, ['user-1']);
+  assert.deepEqual(ctx.db.getGame('g1').playerIds, ['user-1']); // other game untouched
+
+  // /players game: shows the count deduped
+  ctx.db.getGame('g1').playerIds.push('user-1'); // simulate a legacy duplicate
+  ctx.options = { game: 'g1' };
+  const out = await handleCommand('players', ctx);
+  assert.match(out, /\(1\):/);
+  assert.equal((out.match(/<@user-1>/g) || []).length, 1);
+});
