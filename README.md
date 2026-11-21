@@ -31,7 +31,8 @@ Roles are assigned by Discord ID:
   `<AP_DIR>/custom_worlds` (where Archipelago looks when its install dir is
   writable, as in this container) and into the per-game XDG `Archipelago/worlds`
   fallback, so every game can use them.
-- A watcher (`src/watcher.js`) polls running games every `WATCH_INTERVAL_MS` and DMs players who ran `/block` when new items are sent to them; it also tracks each player's last-seen item index for `/received scope: new`.
+- Probing a running game goes through a **persistent per-game probe daemon** (`scripts/ap_probe.py --daemon`, managed in `src/ap/manager.js`): one websocket per player slot, kept open, so the AP server only broadcasts join/leave notices when a daemon starts or a socket drops — not on every poll. The watcher (`src/watcher.js`) only probes games that have a blocked player, and only connects as those players' slots.
+- The watcher DMs players who ran `/block` when new items are sent to them and tracks each player's last-seen item index for `/received scope: new`.
 - `/start` runs Archipelago's `Generate.py` first if the game hasn't been
   generated yet (seed from the `/setup-game` form, random if empty), producing a
   `.archipelago` multidata archive, then launches `MultiServer.py` for it;

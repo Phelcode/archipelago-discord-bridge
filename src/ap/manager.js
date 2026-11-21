@@ -181,6 +181,7 @@ export function startGame(config, db, game, port) {
 }
 
 export function stopGame(config, game) {
+  closeProbeDaemon(game);
   const child = runningServers.get(game.name);
   if (child) {
     try { child.kill('SIGTERM'); } catch { /* already dead */ }
@@ -191,6 +192,68 @@ export function stopGame(config, game) {
     try { process.kill(game.pid, 'SIGTERM'); return true; } catch { return false; }
   }
   return false;
+}
+
+// One long-lived probe process per game, holding one websocket per player
+// slot. Reusing the connections means the AP server sees a join/leave notice
+// only when the daemon starts or a socket drops — not on every poll.
+const probeDaemons = new Map(); // "name:port" -> daemon handle
+
+export function closeProbeDaemon(game) {
+  const key = `${game.name}:${game.port}`;
+  const d = probeDaemons.get(key);
+  if (d) {
+    try { d.proc.kill(); } catch { /* already dead */ }
+    probeDaemons.delete(key);
+  }
+}
+
+async function daemonRequest(config, game, req, timeoutMs, knownSlots) {
+  const key = `${game.name}:${game.port}`;
+  let d = probeDaemons.get(key);
+  if (!d || d.dead) {
+    const args = [config.apProbeScript, '--daemon', '--host', '127.0.0.1', '--port', String(game.port), '--ap-version', config.apVersion, '--timeout', '20'];
+    if (game.password) args.push('--password', game.password);
+    if (knownSlots.length) args.push('--slots', knownSlots.join(','));
+    const proc = spawn(config.apPython, args, { env: { ...process.env, SKIP_REQUIREMENTS_UPDATE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    d = { proc, dead: false, buf: '', waiters: [] };
+    proc.stdout.on('data', (chunk) => {
+      d.buf += chunk.toString();
+      let idx;
+      while ((idx = d.buf.indexOf('\n')) >= 0) {
+        const line = d.buf.slice(0, idx);
+        d.buf = d.buf.slice(idx + 1);
+        const w = d.waiters.shift();
+        if (w) { try { w.resolve(JSON.parse(line)); } catch { w.resolve({ error: 'bad probe response' }); } }
+      }
+    });
+    proc.stderr.on('data', (c) => console.error(`[probe:${game.name}] ${String(c).trimEnd()}`));
+    proc.on('exit', (code) => {
+      d.dead = true;
+      if (probeDaemons.get(key) === d) probeDaemons.delete(key);
+      for (const w of d.waiters.splice(0)) w.resolve({ error: `probe daemon exited (${code})` });
+    });
+    probeDaemons.set(key, d);
+  }
+  return new Promise((resolve) => {
+    const w = { resolve };
+    d.waiters.push(w);
+    try {
+      d.proc.stdin.write(JSON.stringify(req) + '\n');
+    } catch {
+      d.proc.kill();
+      resolve({ error: 'probe daemon not writable' });
+      return;
+    }
+    setTimeout(() => {
+      const i = d.waiters.indexOf(w);
+      if (i >= 0) {
+        d.waiters.splice(i, 1);
+        d.proc.kill(); // stuck daemon; next request respawns it
+        resolve({ error: 'probe request timed out' });
+      }
+    }, timeoutMs);
+  });
 }
 
 export function isServerProcessAlive(game) {
@@ -243,22 +306,8 @@ export function parseItemSends(logFile) {
 
 export async function probe(config, game, mode, slot, timeoutMs, knownSlots, onlySlots) {
   const slots = knownSlots || [];
-  const args = [
-    config.apProbeScript,
-    '--host', '127.0.0.1',
-    '--port', String(game.port),
-    '--mode', mode,
-    '--ap-version', config.apVersion,
-    '--timeout', String(Math.ceil(timeoutMs / 1000)),
-  ];
-  if (game.password) args.push('--password', game.password);
-  if (slots.length) args.push('--slots', slots.join(','));
-  if (onlySlots && onlySlots.length) args.push('--only', onlySlots.join(','));
-  if (slot !== null && slot !== undefined) args.push('--slot', String(slot));
-  const { stdout } = await runProcess(config, args, {
-    env: { ...process.env, SKIP_REQUIREMENTS_UPDATE: '1' },
-    game,
-    timeoutMs,
-  });
-  return JSON.parse(stdout);
+  const req = { mode, slot: slot ?? null, only: onlySlots?.length ? onlySlots : null };
+  const response = await daemonRequest(config, game, req, timeoutMs, slots);
+  if (response.error) throw new Error(response.error);
+  return response;
 }
