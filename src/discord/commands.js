@@ -618,36 +618,27 @@ const handlers = {
     if (!player) throw new UserError('You must /register first.');
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
-    // Probe only our own slot: each slot connection makes the server broadcast
-    // a join/leave notice, so don't connect as every player for one command.
-    const probeResult = await ctx.ap.probe(ctx.config, game, 'received', null, 30000, [player.slot], [player.slot]);
-    const me = probeResult.players.find((p) => p.name === player.slot);
-    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running game.`);
-    const all = probeResult.received?.[me.slot] || [];
+    // Log-based: the MultiServer log records every item send with a
+    // timestamp, so no websocket connection (and no join/leave notice).
+    const logFile = path.join(ctx.ap.gameDir(ctx.config, game), 'server.log');
+    const mine = ctx.ap.parseItemSends(logFile).filter((s) => s.receiver === player.slot);
     const prefs = ctx.db.getPreference(ctx.userId);
     const seen = prefs.lastReceivedIndex?.[game.name] || 0;
     const scope = ctx.options.scope || 'new';
-    const items = scope === 'all' ? all : all.slice(seen);
-    ctx.db.setPreference(ctx.userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [game.name]: all.length });
+    const items = scope === 'all' ? mine : mine.slice(seen);
+    ctx.db.setPreference(ctx.userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [game.name]: mine.length });
     if (!items.length) {
       return scope === 'all'
         ? `You have not received any items yet in **${game.name}**.`
-        : `Nothing new since your last /received in **${game.name}** (${all.length} received in total — /received scope: all for the full list).`;
-    }
-    // "when" comes from the server log (the wire protocol has no timestamps)
-    const sends = ctx.ap.parseItemSends(path.join(ctx.ap.gameDir(ctx.config, game), 'server.log'));
-    const timeByKey = new Map();
-    for (const s of sends) {
-      if (s.receiver === player.slot) timeByKey.set(`${s.item}|${s.sender}`, s.at);
+        : `Nothing new since your last /received in **${game.name}** (${mine.length} received in total — /received scope: all for the full list).`;
     }
     const header = scope === 'all'
-      ? `**Items received by ${player.slot}** (game ${game.name}) — full list (${all.length}):`
+      ? `**Items received by ${player.slot}** (game ${game.name}) — full list (${mine.length}):`
       : `**Items received by ${player.slot}** (game ${game.name}) — new since last check:`;
     const lines = [header];
-    items.forEach((it, i) => {
+    items.forEach((s, i) => {
       const idx = (scope === 'all' ? i : seen + i) + 1;
-      const when = timeByKey.get(`${it.item}|${it.sender_name}`) || 'time not in server log';
-      lines.push(`• #${idx} **${it.item}** from **${it.sender_name}** (found at ${it.location}) — ${when}`);
+      lines.push(`• #${idx} **${s.item}** from **${s.sender}** (found at ${s.location}) — ${s.at}`);
     });
     return lines.join('\n');
   },

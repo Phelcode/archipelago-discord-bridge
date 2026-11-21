@@ -288,13 +288,7 @@ export async function waitForPort(port, timeoutMs = 15000) {
 // MultiServer logs every item send with a timestamp, e.g.:
 // [MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Alice sent Map Bombs to Bob (Tile 3)
 // The wire protocol's ReceivedItems has no timestamps, so "when" comes from this log.
-export function parseItemSends(logFile) {
-  let text;
-  try {
-    text = fs.readFileSync(logFile, 'utf8');
-  } catch {
-    return [];
-  }
+export function parseItemSendsText(text) {
   const sends = [];
   const re = /^\[[^\]]+ at ([^\]]+)\]: \(Team #\d+\) (.+) sent (.+) to (.+) \((.+)\)$/gm;
   let m;
@@ -302,6 +296,14 @@ export function parseItemSends(logFile) {
     sends.push({ at: m[1], sender: m[2], item: m[3], receiver: m[4], location: m[5] });
   }
   return sends;
+}
+
+export function parseItemSends(logFile) {
+  try {
+    return parseItemSendsText(fs.readFileSync(logFile, 'utf8'));
+  } catch {
+    return [];
+  }
 }
 
 export async function probe(config, game, mode, slot, timeoutMs, knownSlots, onlySlots) {

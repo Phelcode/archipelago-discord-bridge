@@ -327,32 +327,25 @@ test('delete-game on an unknown game fails clearly', async () => {
   await assert.rejects(() => handleCommand('delete-game', ctx), /Unknown game/);
 });
 
-test('received shows new items by default (what/who/when) and the full list with scope: all', async () => {
+test('received reads item sends from the server log (what/who/when); new by default, all with scope: all', async () => {
   const ctx = makeCtx();
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
   ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'] });
-  const receivedData = {
-    2: [
-      { item_id: 1, item: 'Map Bombs', location_id: 3, location: 'Tile 3', sender_slot: 1, sender_name: 'Bob', flags: 1 },
-      { item_id: 2, item: 'Progressive Sword', location_id: 4, location: 'Tile 4', sender_slot: 1, sender_name: 'Bob', flags: 0 },
-    ],
-  };
-  ctx.ap = {
-    ...realAp,
-    async probe() {
-      return { room: {}, players: [{ slot: 2, name: 'Alice', game: 'ChecksFinder', checked: [], missing_count: 0, total: 25, hint_points: 0, status: 20 }], received: receivedData };
-    },
-    parseItemSends() {
-      return [{ at: '2026-01-02 03:04:05,678', sender: 'Bob', item: 'Map Bombs', receiver: 'Alice', location: 'Tile 3' }];
-    },
-  };
+  const logDir = realAp.gameDir(ctx.config, ctx.db.getGame('g'));
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(path.join(logDir, 'server.log'), [
+    '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Bob sent Map Bombs to Alice (Tile 3)',
+    '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 4)',
+    '[MultiServer at 2026-01-02 03:05:01,000]: (Team #1) Alice sent Map Bombs to Bob (Tile 9)',
+    '',
+  ].join('\n'));
   ctx.options = { game: 'g' };
   let out = await handleCommand('received', ctx);
   assert.match(out, /Map Bombs/);
   assert.match(out, /Progressive Sword/);
   assert.match(out, /from \*\*Bob\*\*/); // by who
-  assert.match(out, /2026-01-02 03:04:05,678/); // when, from the server log
-  assert.match(out, /time not in server log/); // item missing from log
+  assert.match(out, /2026-01-02 03:04:05,678/); // when, from the log timestamp
+  assert.doesNotMatch(out, /Tile 9/); // items sent BY Alice are not hers
   assert.equal(ctx.db.getPreference('user-1').lastReceivedIndex.g, 2);
 
   out = await handleCommand('received', ctx); // nothing new since last check

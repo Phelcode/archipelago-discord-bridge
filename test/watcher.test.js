@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
 import { pollRunningGames } from '../src/watcher.js';
+import { gameDir, parseItemSendsText } from '../src/ap/manager.js';
 
 function makeEnv() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-watch-'));
@@ -13,98 +14,79 @@ function makeEnv() {
   return { config, db };
 }
 
-function apStub(probeResult, overrides = {}) {
+function writeLog(config, game, lines) {
+  const dir = gameDir(config, game);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'server.log'), lines.join('\n') + '\n');
+}
+
+function apStub() {
   const calls = { probe: 0 };
   return {
     calls,
     isServerProcessAlive: () => true,
-    probe: async () => { calls.probe += 1; return probeResult; },
-    ...overrides,
+    probe: async () => { calls.probe += 1; throw new Error('watcher must not probe'); },
+    gameDir,
+    parseItemSendsText,
   };
 }
 
-const RECEIVED = {
-  players: [
-    { slot: 1, name: 'Alice' },
-    { slot: 2, name: 'Bob' },
-  ],
-  received: {
-    1: [{ item_id: 10, item: 'Map Bombs', location_id: 3, location: 'Tile 3', sender_slot: 2, sender_name: 'Bob', flags: 1 }],
-    2: [],
-  },
-};
+const SEND_ALICE = '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Bob sent Map Bombs to Alice (Tile 3)';
+const SEND_ALICE_2 = '[MultiServer at 2026-01-02 03:06:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 4)';
+const SEND_BOB = '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Alice sent Key to Bob (Tile 9)';
 
-test('blocked players get a DM for each new item; last-received index advances for everyone', async () => {
+test('blocked players get a DM per new item send in the log; offset advances; no probing', async () => {
   const { config, db } = makeEnv();
   db.setPlayer('u1', { slot: 'Alice', game: 'G' });
   db.setPlayer('u2', { slot: 'Bob', game: 'G' });
   db.setPreference('u1', 'blocked', true);
   db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1', 'u2'] });
-  const ap = apStub(RECEIVED);
+  writeLog(config, db.getGame('g'), [SEND_ALICE, SEND_BOB]);
+  const ap = apStub();
   const dms = [];
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  assert.equal(ap.calls.probe, 1);
-  assert.equal(dms.length, 1);
+  assert.equal(ap.calls.probe, 0, 'watcher never opens a websocket');
+  assert.equal(dms.length, 1); // only Alice is blocked; Bob's send is ignored
   assert.equal(dms[0][0], 'u1');
   assert.match(dms[0][1], /Map Bombs/);
   assert.match(dms[0][1], /Bob/);
-  assert.match(dms[0][1], /\*\*g\*\*/);
+  assert.match(dms[0][1], /2026-01-02 03:04:05,678/);
   assert.equal(db.getPreference('u1').lastReceivedIndex.g, 1);
-  assert.equal(db.getPreference('u2').lastReceivedIndex, undefined); // no new items -> index untouched
+  assert.ok(db.getGame('g').logOffset > 0);
 
-  // second tick: nothing new -> no further DMs
+  // second tick with one more send to Alice: exactly one more DM
+  const logFile = path.join(gameDir(config, db.getGame('g')), 'server.log');
+  fs.appendFileSync(logFile, SEND_ALICE_2 + '\n');
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  assert.equal(dms.length, 1);
+  assert.equal(dms.length, 2);
+  assert.match(dms[1][1], /Progressive Sword/);
+  assert.equal(db.getPreference('u1').lastReceivedIndex.g, 2);
+
+  // third tick, nothing new: no DM
+  await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
+  assert.equal(dms.length, 2);
 });
 
-test('games with no blocked players are not probed at all (no join/leave spam)', async () => {
+test('games with no blocked players are not even read; non-running/dead games skipped', async () => {
   const { config, db } = makeEnv();
   db.setPlayer('u1', { slot: 'Alice', game: 'G' });
   db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1'] });
-  const ap = apStub(RECEIVED);
-  const dms = [];
-  await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  assert.equal(ap.calls.probe, 0, 'no probe when nobody is blocked');
-  assert.equal(dms.length, 0);
-  assert.equal(db.getPreference('u1').lastReceivedIndex, undefined); // /received scope:new advances it on demand
-});
-
-test('the watcher probes only the blocked players\' slots', async () => {
-  const { config, db } = makeEnv();
-  db.setPlayer('u1', { slot: 'Alice', game: 'G' });
-  db.setPlayer('u2', { slot: 'Bob', game: 'G' });
-  db.setPreference('u1', 'blocked', true);
-  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1', 'u2'] });
-  const seen = [];
-  const ap = apStub(RECEIVED);
-  const origProbe = ap.probe;
-  ap.probe = async (c, game, mode, slot, timeout, known, only) => {
-    seen.push({ known, only });
-    return origProbe(c, game, mode, slot, timeout, known);
-  };
-  await pollRunningGames(config, db, ap, async () => {});
-  assert.equal(seen.length, 1);
-  assert.deepEqual(seen[0].known, ['Alice']);
-  assert.deepEqual(seen[0].only, ['Alice']);
-});
-
-test('non-running or dead games are skipped; probe failures are tolerated', async () => {
-  const { config, db } = makeEnv();
-  db.setPlayer('u1', { slot: 'Alice', game: 'G' });
-  db.setPreference('u1', 'blocked', true);
+  writeLog(config, db.getGame('g'), [SEND_ALICE]);
   db.setGame('stopped', { name: 'stopped', status: 'stopped', playerIds: ['u1'] });
   db.setGame('dead', { name: 'dead', status: 'running', playerIds: ['u1'] });
-  db.setGame('boom', { name: 'boom', status: 'running', playerIds: ['u1'] });
-  const ap = apStub(RECEIVED, { isServerProcessAlive: (g) => g.name !== 'dead' });
-  const origProbe = ap.probe;
-  ap.probe = async (c, game) => {
-    ap.calls.probe += 1;
-    if (game.name === 'boom') throw new Error('conn refused');
-    return origProbe(c, game);
-  };
+  db.setPreference('u1', 'blocked', true); // blocked, but only in 'dead'/'stopped'... move to dead:
+  db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['u1'], logOffset: 0 });
+  const ap = apStub();
+  ap.isServerProcessAlive = (g) => g.name !== 'dead';
   const dms = [];
   await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
-  // 'stopped' is not running and 'dead' is not alive, so only 'boom' is probed (and fails) -> no DMs
-  assert.equal(ap.calls.probe, 1);
-  assert.equal(dms.length, 0);
+  // u1 is blocked and in 'g' (running+alive) -> one DM from g; dead/stopped skipped
+  assert.equal(dms.length, 1);
+
+  // now unblock everyone -> log not read, no offset change
+  db.setPreference('u1', 'blocked', false);
+  const before = db.getGame('g').logOffset;
+  await pollRunningGames(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
+  assert.equal(dms.length, 1);
+  assert.equal(db.getGame('g').logOffset, before);
 });
