@@ -851,3 +851,35 @@ test('/release is host-only (PERMISSIONS) and always targets the given player', 
   ctx.options = { game: 'g', player: 'Bob' };
   await assert.rejects(() => handleCommand('release', ctx), /not running/);
 });
+
+test('/players game: shows live connection status for a running game (single overview probe)', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'G' });
+  ctx.db.setPlayer('222', { slot: 'Bob', game: 'G' });
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1', '222'] });
+  let probeCalls = 0;
+  ctx.ap = {
+    ...realAp,
+    async probe(config, game, mode, slot, timeout, slots) {
+      probeCalls += 1;
+      assert.equal(mode, 'overview');
+      return { players: [
+        { slot: 1, name: 'Alice', status: 20 },
+        { slot: 2, name: 'Bob', status: 0 },
+      ] };
+    },
+  };
+  ctx.options = { game: 'g' };
+  const out = await handleCommand('players', ctx);
+  assert.equal(probeCalls, 1);
+  assert.match(out, /Alice.*playing/);
+  assert.match(out, /Bob.*offline/);
+
+  // non-running game: no probe, no status
+  ctx.db.getGame('g').status = 'setup';
+  ctx.db.setGame('g', ctx.db.getGame('g'));
+  probeCalls = 0;
+  const out2 = await handleCommand('players', ctx);
+  assert.equal(probeCalls, 0);
+  assert.doesNotMatch(out2, /playing/);
+});

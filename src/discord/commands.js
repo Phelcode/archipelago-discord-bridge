@@ -690,9 +690,18 @@ const handlers = {
     if (ctx.options.game) {
       const game = resolveGame(ctx, ctx.options.game);
       const lines = [`**Players in "${game.name}" (${playerIdsOf(game).length}):**`];
+      // live connection status from one overview probe (single connection)
+      let live = null;
+      if (game.status === 'running') {
+        try {
+          const ov = await ctx.ap.probe(ctx.config, game, 'overview', null, 15000, gamePlayerSlots(ctx.db, game));
+          live = new Map(ov.players.map((p) => [p.name, p.status]));
+        } catch { live = null; } // server unreachable — just omit statuses
+      }
       for (const userId of playerIdsOf(game)) {
         const p = ctx.db.getPlayer(userId);
-        lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}`);
+        const online = live && p && live.has(p.slot) ? ` — ${statusName(live.get(p.slot))}` : '';
+        lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}${online}`);
       }
       if (!lines[1]) lines.push('(none yet — players use /join)');
       return lines.join('\n');
