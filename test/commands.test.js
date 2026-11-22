@@ -935,3 +935,38 @@ test('/glossary documents the terms used in the app', async () => {
   }
   assert.match(out, /multiworld:/); // the command option name
 });
+
+test('/unregister requires world: when you have several worlds; removes just that one', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setPlayer('user-1', { slot: 'Alice2', game: 'HollowKnight' });
+  fs.mkdirSync(path.join(ctx.config.dataDir, 'players', 'user-1'), { recursive: true });
+  fs.writeFileSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml'), 'x');
+  fs.writeFileSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml'), 'x');
+
+  // several worlds, no world: -> refuse
+  await assert.rejects(() => handleCommand('unregister', ctx), /several worlds.*world:/s);
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice', 'Alice2']);
+
+  // unknown world -> refuse with the list
+  ctx.options = { world: 'Nope' };
+  await assert.rejects(() => handleCommand('unregister', ctx), /no world named "Nope"/);
+
+  // specify one -> removed, other remains, yaml file gone
+  ctx.options = { world: 'Alice' };
+  const out = await handleCommand('unregister', ctx);
+  assert.match(out, /Removed world \*\*Alice\*\*/);
+  assert.match(out, /Remaining worlds: Alice2/);
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice2']);
+  assert.ok(!fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml')));
+
+  // single remaining world, no world: -> removes it (not dangerous)
+  ctx.options = {};
+  const out2 = await handleCommand('unregister', ctx);
+  assert.match(out2, /no longer registered/);
+  assert.equal(ctx.db.getPlayer('user-1'), null);
+
+  // not registered at all
+  await assert.rejects(() => handleCommand('unregister', ctx), /not registered/);
+});

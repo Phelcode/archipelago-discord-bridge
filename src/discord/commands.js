@@ -22,7 +22,11 @@ export const COMMAND_DEFINITIONS = [
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
   { name: 'glossary', description: 'Archipelago terms used in this app (multiworld, world, slot, seed, …)' },
   { name: 'register', description: 'Register a world/slot (modal form for your .yaml); repeat for more worlds; multiworld: also joins it', options: [multiworldOption(false)] },
-  { name: 'unregister', description: 'Remove all your registered worlds and yamls' },
+    {
+    name: 'unregister',
+    description: 'Remove a registered world and its yaml; with several worlds, world: is required',
+    options: [{ name: 'world', description: 'Slot name of the world to remove (required if you have several)', type: STRING, required: false }],
+  },
   {
     name: 'profile',
     description: 'Show your role/registration and choose who can see replies to your commands',
@@ -347,7 +351,7 @@ export const COMMAND_SUMMARIES = {
   help: 'Step-by-step intro for your role',
   glossary: 'Archipelago terms used here (multiworld, world, slot, seed, room, yaml, apworld, check, hint, release)',
   register: 'Register a world/slot (upload your .yaml in the form); repeat for more; multiworld: auto-joins it',
-  unregister: 'Remove all your registered worlds and yamls',
+  unregister: 'Remove one registered world (world: required if you have several); with a single world, removes it',
   profile: 'Your role/registration; set private or public replies',
   join: 'Join a multiworld with all your registered worlds (slots)',
   leave: 'Leave a multiworld',
@@ -608,10 +612,31 @@ const handlers = {
   },
 
   async unregister(ctx) {
-    if (!ctx.db.getPlayer(ctx.userId)) throw new UserError('You are not registered.');
-    ctx.db.removePlayer(ctx.userId);
-    try { fs.rmSync(path.join(ctx.config.dataDir, 'players', ctx.userId), { recursive: true, force: true }); } catch { /* ignore */ }
-    return 'Your registered worlds and yamls were removed.';
+    const worlds = ctx.db.getWorlds(ctx.userId);
+    if (!worlds.length) throw new UserError('You are not registered.');
+    const opt = ctx.options.world;
+    let targets;
+    if (opt) {
+      if (!worlds.some((w) => w.slot === opt)) {
+        throw new UserError(`You have no world named "${opt}". Your worlds: ${worlds.map((w) => w.slot).join(', ')}.`);
+      }
+      targets = [opt];
+    } else if (worlds.length > 1) {
+      throw new UserError(`You have several worlds (${worlds.map((w) => w.slot).join(', ')}) — specify one with world: <slot>.`);
+    } else {
+      targets = [worlds[0].slot];
+    }
+    for (const slot of targets) {
+      ctx.db.removeWorld(ctx.userId, slot);
+      try { fs.unlinkSync(path.join(ctx.config.dataDir, 'players', ctx.userId, `${slot}.yaml`)); } catch { /* ignore */ }
+    }
+    // drop the per-user dir if empty
+    try {
+      const dir = path.join(ctx.config.dataDir, 'players', ctx.userId);
+      if (fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
+    } catch { /* ignore */ }
+    const remaining = ctx.db.getWorlds(ctx.userId).map((w) => w.slot);
+    return `Removed world **${targets.join(', ')}**.${remaining.length ? ` Remaining worlds: ${remaining.join(', ')}.` : ' You are no longer registered.'}`;
   },
 
   async profile(ctx) {

@@ -79,6 +79,16 @@ export class Store {
     return Object.values(this.data.worlds).find((w) => w.slot === slot) || null;
   }
 
+  removeWorld(userId, slot) {
+    delete this.data.worlds[`${userId}:${slot}`];
+    const p = this.data.players[userId];
+    if (p) {
+      p.slots = p.slots.filter((s2) => s2 !== slot);
+      if (!p.slots.length) delete this.data.players[userId];
+    }
+    this.save();
+  }
+
   removePlayer(userId) {
     for (const slot of this.data.players[userId]?.slots || []) delete this.data.worlds[`${userId}:${slot}`];
     delete this.data.players[userId];
