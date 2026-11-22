@@ -8,8 +8,7 @@ import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
   registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, payloadHash,
-  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
-} from '../src/discord/commands.js';
+  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME, PERMISSIONS } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -818,43 +817,37 @@ test('all command/option/choice names and descriptions fit Discord limits', () =
   for (const d of COMMAND_DEFINITIONS) check(d, d.name);
 });
 
-test('/release releases yourself by default, others only for hosts, and needs a running game', async () => {
+test('/release is host-only (PERMISSIONS) and always targets the given player', async () => {
+  assert.equal(PERMISSIONS.release, 'host');
+  const byName = Object.fromEntries(COMMAND_DEFINITIONS.map((d) => [d.name, d]));
+  const playerOpt = byName.release.options.find((o) => o.name === 'player');
+  assert.equal(playerOpt.required, true, 'player: has no default — must be given');
+
   const ctx = makeCtx();
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'] });
+  ctx.db.setPlayer('222', { slot: 'Bob', game: 'ChecksFinder' });
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1', '222'] });
   const said = [];
   ctx.ap = { ...realAp, say: async (config, game, slot, text) => { said.push([slot, text]); return { ok: true, replies: ['ok'] }; } };
 
-  ctx.options = { game: 'g' };
-  let out = await handleCommand('release', ctx);
-  assert.match(out, /Released \*\*Alice\*\*/);
-  assert.deepEqual(said, [['Alice', '!release']]);
-
-  // non-host cannot release someone else
-  ctx.db.setPlayer('222', { slot: 'Bob', game: 'ChecksFinder' });
+  // by @user
   ctx.options = { game: 'g', player: '<@222>' };
-  await assert.rejects(() => handleCommand('release', ctx), /Only hosts/);
-
-  // host can
-  ctx.db.addHost('user-1');
-  out = await handleCommand('release', ctx);
+  let out = await handleCommand('release', ctx);
   assert.match(out, /Released \*\*Bob\*\*/);
-  assert.deepEqual(said[1], ['Bob', '!release']);
+  assert.deepEqual(said, [['Bob', '!release']]);
 
-  // slot name works too
+  // by slot name
   ctx.options = { game: 'g', player: 'Bob' };
   await handleCommand('release', ctx);
-  assert.deepEqual(said[2], ['Bob', '!release']);
+  assert.deepEqual(said[1], ['Bob', '!release']);
 
-  // unregistered self
-  await assert.rejects(
-    () => handleCommand('release', makeCtx({ userId: 'user-9', db: ctx.db, config: ctx.config, options: { game: 'g' }, ap: ctx.ap })),
-    /register/,
-  );
+  // unknown @user
+  ctx.options = { game: 'g', player: '<@999>' };
+  await assert.rejects(() => handleCommand('release', ctx), /No registered player/);
 
   // not running
   ctx.db.getGame('g').status = 'stopped';
   ctx.db.setGame('g', ctx.db.getGame('g'));
-  ctx.options = { game: 'g' };
+  ctx.options = { game: 'g', player: 'Bob' };
   await assert.rejects(() => handleCommand('release', ctx), /not running/);
 });

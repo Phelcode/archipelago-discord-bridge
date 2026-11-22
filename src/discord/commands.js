@@ -42,10 +42,10 @@ export const COMMAND_DEFINITIONS = [
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
   {
     name: 'release',
-    description: 'Release a player (like AP !release): sends out all their remaining items',
+    description: '[host] Release a player (like AP !release): sends out all their remaining items',
     options: [
+      { name: 'player', description: 'Slot name or @user to release', type: STRING, required: true },
       gameOption(false),
-      { name: 'player', description: 'Slot name or @user to release (default: yourself; others need host)', type: STRING, required: false },
     ],
   },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
@@ -262,7 +262,7 @@ export const PERMISSIONS = {
   profile: 'all',
   join: 'all',
   leave: 'all',
-  release: 'all',
+  release: 'host',
   players: 'all',
   'setup-game': 'host',
   'upload-apworld': 'host',
@@ -348,7 +348,7 @@ const COMMAND_SUMMARIES = {
   profile: 'Your role/registration; set private or public replies',
   join: 'Join a game session with your registered yaml',
   leave: 'Leave a game session',
-  release: 'Release a player (AP !release) — sends out all their remaining items; others need host',
+  release: '[host] Release a player (AP !release) — sends out all their remaining items',
   players: 'List registered players (🔒 = blocked), or players of one game',
   'setup-game': '[host] Create a game session (opens a form)',
   'upload-apworld': '[host] Upload a .apworld (usable in every game; opens a form)',
@@ -552,7 +552,7 @@ const handlers = {
         '**Playing**',
         '1. `/register game: <name>` — upload your yaml and join in one step (or `/register`, then `/join game: <name>`)',
         '2. `/stats`, `/game-stats` — watch progress; `/hints`, `/received` — your hints and items',
-        '3. Can\'t play anymore? `/release game: <name>` sends out all your remaining items (hosts can release others)',
+        '3. Hosts can `/release game: <name> player: <slot or @user>` to send out a player\'s remaining items',
       );
     } else {
       lines.push(
@@ -670,22 +670,16 @@ const handlers = {
   },
 
   async release(ctx) {
+    // Host-only is enforced by PERMISSIONS before this handler runs.
     const game = resolveGame(ctx, ctx.options.game);
     if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
     const opt = ctx.options.player;
-    let targetUserId = ctx.userId;
-    let slotName = null;
-    if (opt) {
-      const mention = opt.match(/^<@!?(\d+)>$/);
-      if (mention) targetUserId = mention[1];
-      else slotName = opt;
-    }
-    if (targetUserId !== ctx.userId && !canHost(ctx.db, ctx.config, ctx.userId)) {
-      throw new UserError('Only hosts can release other players — use /release with no player: to release yourself.');
-    }
-    const player = ctx.db.getPlayer(targetUserId);
-    if (!player) throw new UserError(opt ? `No registered player matches "${opt}".` : 'You must /register first.');
-    const slot = slotName || player.slot;
+    const mention = opt.match(/^<@!?(\d+)>$/);
+    const targetUserId = mention ? mention[1] : null;
+    const slotName = mention ? null : opt;
+    const player = targetUserId ? ctx.db.getPlayer(targetUserId) : null;
+    const slot = slotName || player?.slot;
+    if (!slot) throw new UserError(`No registered player matches "${opt}".`);
     const res = await ctx.ap.say(ctx.config, game, slot, '!release');
     const reply = res.replies?.length ? `\nServer: ${res.replies.join(' ')}` : '';
     return `✅ Released **${slot}** in game **${game.name}** — all their remaining items are sent out.${reply}`;
