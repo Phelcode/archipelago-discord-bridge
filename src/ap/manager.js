@@ -107,13 +107,13 @@ export function stagePlayers(config, db, mw) {
   fs.mkdirSync(playersDir, { recursive: true });
   const staged = [];
   for (const userId of userIdsOf(mw)) {
-    const player = db.getPlayer(userId);
-    if (!player) continue;
-    const src = path.join(config.dataDir, 'players', `${userId}.yaml`);
-    if (!fs.existsSync(src)) continue;
-    const dest = path.join(playersDir, `${player.slot}.yaml`);
-    fs.copyFileSync(src, dest);
-    staged.push(player.slot);
+    for (const world of db.getWorlds(userId)) {
+      const src = path.join(config.dataDir, 'players', userId, `${world.slot}.yaml`);
+      if (!fs.existsSync(src)) continue;
+      const dest = path.join(playersDir, `${world.slot}.yaml`);
+      fs.copyFileSync(src, dest);
+      staged.push(world.slot);
+    }
   }
   return staged;
 }

@@ -12,8 +12,8 @@ export async function pollRunningMultiworlds(config, db, apImpl, notify) {
   for (const mw of db.listMultiworlds()) {
     if (mw.status !== 'running' || !apImpl.isServerProcessAlive(mw)) continue;
     const blocked = userIdsOf(mw)
-      .map((id) => ({ id, player: db.getPlayer(id) }))
-      .filter((x) => x.player && db.getPreference(x.id).blocked);
+      .filter((id) => db.getPlayer(id) && db.getPreference(id).blocked)
+      .map((id) => ({ id, slots: db.getWorlds(id).map((w2) => w2.slot) }));
     if (!blocked.length) continue; // nobody blocked -> don't even read the log
 
     const logFile = path.join(apImpl.multiworldDir(config, mw), 'server.log');
@@ -32,7 +32,7 @@ export async function pollRunningMultiworlds(config, db, apImpl, notify) {
     mw.logOffset = offset + lastNl + 1;
     db.setMultiworld(mw.name, mw);
 
-    const bySlot = new Map(blocked.map((x) => [x.player.slot, x.id]));
+    const bySlot = new Map(blocked.flatMap((x) => x.slots.map((slot) => [slot, x.id])));
     for (const s of apImpl.parseItemSendsText(complete)) {
       const userId = bySlot.get(s.receiver);
       if (!userId) continue;

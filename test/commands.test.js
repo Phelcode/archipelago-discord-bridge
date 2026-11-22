@@ -8,7 +8,7 @@ import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
   registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, payloadHash,
-  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_MULTIWORLD, PERMISSIONS } from '../src/discord/commands.js';
+  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_MULTIWORLD, PERMISSIONS, multiworldSlots } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -90,7 +90,7 @@ test('register validates and stores the player yaml', async () => {
   assert.match(out, /Alice/);
   assert.match(out, /ChecksFinder/);
   assert.equal(ctx.db.getPlayer('user-1').slot, 'Alice');
-  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
 });
 
 test('register rejects bad yaml', async () => {
@@ -890,4 +890,39 @@ test('every command has a /commands summary and a PERMISSIONS entry', async () =
     assert.ok(COMMAND_SUMMARIES[def.name], `missing COMMAND_SUMMARIES entry for /${def.name}`);
     assert.ok(PERMISSIONS[def.name], `missing PERMISSIONS entry for /${def.name}`);
   }
+});
+
+test('a user can register multiple worlds (each with its own yaml) and join multiple multiworlds', async () => {
+  const ctx = makeCtx();
+  ctx.db.setMultiworld('g1', { name: 'g1', status: 'setup', userIds: [] });
+  ctx.db.setMultiworld('g2', { name: 'g2', status: 'setup', userIds: [] });
+  const yamlA = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const yamlB = 'name: Alice2\ngame: HollowKnight\nHollow Knight: {}\n';
+  const mk = (yaml) => makeCtx({
+    db: ctx.db, config: ctx.config,
+    attachments: { yaml: { filename: 'p.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  let out = await handleCommand('register', mk(yamlA));
+  assert.match(out, /Registered world \*\*Alice\*\*/);
+  out = await handleCommand('register', mk(yamlB));
+  assert.match(out, /Your worlds: Alice, Alice2/);
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml')));
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice', 'Alice2']);
+
+  // join both multiworlds: membership is per user, slots fan out per mw
+  ctx.options = { multiworld: 'g1' };
+  await handleCommand('join', ctx);
+  ctx.options = { multiworld: 'g2' };
+  await handleCommand('join', ctx);
+  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']);
+  assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']);
+  assert.deepEqual(multiworldSlots(ctx.db, ctx.db.getMultiworld('g1')).sort(), ['Alice', 'Alice2']);
+
+  // register directly into a multiworld joins it
+  const ctx3 = makeCtx({ db: ctx.db, config: ctx.config, options: { multiworld: 'g2' }, attachments: { yaml: { filename: 'p.yaml', size: yamlA.length, url: 'u' } }, download: async () => Buffer.from(yamlA) });
+  out = await handleCommand('register', ctx3);
+  assert.match(out, /joined multiworld \*\*g2\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']); // still unique
 });

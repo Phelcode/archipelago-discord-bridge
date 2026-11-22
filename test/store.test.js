@@ -40,10 +40,10 @@ test('store starts empty when file is missing or corrupt', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-store-'));
   const file = path.join(dir, 'db.json');
   const store = new Store(file);
-  assert.deepEqual(store.data, { hosts: [], players: {}, multiworlds: {}, preferences: {} });
+  assert.deepEqual(store.data, { hosts: [], players: {}, worlds: {}, multiworlds: {}, preferences: {} });
   fs.writeFileSync(file, '{not json');
   const store2 = new Store(file);
-  assert.deepEqual(store2.data, { hosts: [], players: {}, multiworlds: {}, preferences: {} });
+  assert.deepEqual(store2.data, { hosts: [], players: {}, worlds: {}, multiworlds: {}, preferences: {} });
 });
 
 test('store persists per-user preferences and tolerates old db files', () => {

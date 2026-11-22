@@ -170,7 +170,7 @@ test('register modal submit downloads the uploaded yaml and registers the player
   });
   await dispatch(interaction);
   assert.deepEqual(calls.deferReply, [{ flags: 64 }]); // register is always ephemeral
-  assert.match(calls.editReply[0], /Registered as player \*\*Dave\*\*/);
+  assert.match(calls.editReply[0], /Registered world \*\*Dave\*\*/);
   assert.equal(db.getPlayer('user-1').slot, 'Dave');
 });
 

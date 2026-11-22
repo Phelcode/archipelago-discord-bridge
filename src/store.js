@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const EMPTY = () => ({ hosts: [], players: {}, multiworlds: {}, preferences: {} });
+const EMPTY = () => ({ hosts: [], players: {}, worlds: {}, multiworlds: {}, preferences: {} });
 
 // (player, mw) memberships are unique: a Discord user appears at most once
 // per mw, but may be in several games. Dedupe on read as well as on write.
@@ -49,22 +49,45 @@ export class Store {
     this.save();
   }
 
+  // A registered user can hold several worlds (slots), each from its own
+  // yaml: players[userId] = { userId, slots: [slotName, ...] } and
+  // worlds["<userId>:<slot>"] = { userId, slot, game }.
   getPlayer(userId) {
-    return this.data.players[userId] || null;
+    const p = this.data.players[userId];
+    if (!p) return null;
+    const firstKey = `${userId}:${p.slots[0]}`;
+    const first = this.data.worlds[firstKey] || {};
+    return { userId, slots: [...p.slots], slot: p.slots[0], game: first.game };
   }
 
-  setPlayer(userId, player) {
-    this.data.players[userId] = player;
+  setPlayer(userId, { slot, game }) {
+    const key = `${userId}:${slot}`;
+    this.data.worlds[key] = { userId, slot, game };
+    const p = this.data.players[userId] || { userId, slots: [] };
+    if (!p.slots.includes(slot)) p.slots.push(slot);
+    this.data.players[userId] = p;
     this.save();
   }
 
+  getWorlds(userId) {
+    const p = this.data.players[userId];
+    if (!p) return [];
+    return p.slots.map((slot) => this.data.worlds[`${userId}:${slot}`]).filter(Boolean);
+  }
+
+  findWorldBySlot(slot) {
+    return Object.values(this.data.worlds).find((w) => w.slot === slot) || null;
+  }
+
   removePlayer(userId) {
+    for (const slot of this.data.players[userId]?.slots || []) delete this.data.worlds[`${userId}:${slot}`];
     delete this.data.players[userId];
     this.save();
   }
 
   clearPlayers() {
     this.data.players = {};
+    this.data.worlds = {};
     this.save();
   }
 

@@ -371,7 +371,7 @@ const ACTIVE_STATUSES = new Set(['setup', 'generating', 'generated', 'running'])
 
 function formatMultiworldLine(ctx, g) {
   const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
-  const players = userIdsOf(g).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
+  const players = userIdsOf(g).flatMap((id) => ctx.db.getWorlds(id).map((w) => w.slot)).join(', ') || 'none';
   return [
     `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
     `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
@@ -437,13 +437,12 @@ async function ensureGenerated(ctx, mw) {
   return result;
 }
 
-function multiworldSlots(db, mw) {
+export function multiworldSlots(db, mw) {
   const slots = [];
   for (const userId of userIdsOf(mw)) {
-    const player = db.getPlayer(userId);
-    if (player) slots.push(player.slot);
+    for (const world of db.getWorlds(userId)) slots.push(world.slot);
   }
-  return slots;
+  return [...new Set(slots)];
 }
 
 function parsePlayerYaml(buffer, overrideName) {
@@ -551,14 +550,14 @@ const handlers = {
     } else if (ctx.db.getPlayer(ctx.userId)) {
       lines.push(
         '**Playing**',
-        '1. `/register multiworld: <name>` — upload your yaml and join in one step (or `/register`, then `/join multiworld: <name>`)',
+        '1. `/register [multiworld:]` — upload a yaml per world (slot); repeat to add more worlds. With `multiworld:` you also join that multiworld',
         '2. `/stats`, `/multiworld-stats` — watch progress; `/hints`, `/received` — your hints and items',
         '3. `/block` — get a DM when someone sends you an item; `/unblock` to stop',
       );
     } else {
       lines.push(
         '**Spectating** — `/status`, `/stats`, `/multiworld-stats`, `/players` work for everyone.',
-        'To play: `/register multiworld: <name>` (uploads your player yaml and joins in one step).',
+        'To play: `/register multiworld: <name>` — upload a yaml (one per world/slot; repeat for more) and join in one step.',
       );
     }
     lines.push('', '`/commands` lists everything; `/profile` sets private vs public replies.');
@@ -574,19 +573,20 @@ const handlers = {
     const buffer = Buffer.from(await ctx.download(att.url));
     if (buffer.length > ctx.config.maxAttachmentBytes) throw new UserError('File is too large.');
     const { slot, game } = parsePlayerYaml(buffer, ctx.options.name || ctx.modal?.fields?.name);
-    const playersDir = path.join(ctx.config.dataDir, 'players');
+    const playersDir = path.join(ctx.config.dataDir, 'players', ctx.userId);
     fs.mkdirSync(playersDir, { recursive: true });
-    fs.writeFileSync(path.join(playersDir, `${ctx.userId}.yaml`), buffer);
-    ctx.db.setPlayer(ctx.userId, { slot, game, registeredAt: new Date().toISOString() });
-    if (!targetMultiworld) return `Registered as player **${slot}** (game: ${game}). Use /join multiworld: to enter a multiworld.`;
+    fs.writeFileSync(path.join(playersDir, `${slot}.yaml`), buffer);
+    ctx.db.setPlayer(ctx.userId, { slot, game });
+    const mySlots = ctx.db.getWorlds(ctx.userId).map((w) => w.slot).join(', ');
+    if (!targetMultiworld) return `Registered world **${slot}** (${game}). Your worlds: ${mySlots}. Use /join multiworld: <name> to enter a multiworld.`;
     joinMultiworld(ctx, targetMultiworld);
-    return `Registered as player **${slot}** (game: ${game}) and joined multiworld **${targetMultiworld.name}**.`;
+    return `Registered world **${slot}** (${game}) and joined multiworld **${targetMultiworld.name}** (your worlds there: ${mySlots}).`;
   },
 
   async unregister(ctx) {
     if (!ctx.db.getPlayer(ctx.userId)) throw new UserError('You are not registered.');
     ctx.db.removePlayer(ctx.userId);
-    try { fs.unlinkSync(path.join(ctx.config.dataDir, 'players', `${ctx.userId}.yaml`)); } catch { /* ignore */ }
+    try { fs.rmSync(path.join(ctx.config.dataDir, 'players', ctx.userId), { recursive: true, force: true }); } catch { /* ignore */ }
     return 'Your player registration was removed.';
   },
 
@@ -607,7 +607,7 @@ const handlers = {
     return [
       '**Your profile**',
       `Role: **${role}**`,
-      player ? `Registered as player: **${player.slot}** (${player.game})` : 'Not registered as a player — use /register',
+      player ? `Registered worlds: ${ctx.db.getWorlds(ctx.userId).map((w) => `**${w.slot}** (${w.game})`).join(', ')}` : 'Not registered — use /register (you can register several worlds, each with its own yaml)',
       `Replies to your commands: **${current}**`,
       'Change it with `/profile responses: private` or `/profile responses: public`.',
       `Blocked (DM when someone sends you an item): **${blocked ? 'yes' : 'no (default)'}** — change with /block or /unblock`,
@@ -633,7 +633,8 @@ const handlers = {
     // Log-based: the MultiServer log records every item send with a
     // timestamp, so no websocket connection (and no join/leave notice).
     const logFile = path.join(ctx.ap.multiworldDir(ctx.config, mw), 'server.log');
-    const mine = ctx.ap.parseItemSends(logFile).filter((s) => s.receiver === player.slot);
+    const mySlots = ctx.db.getWorlds(ctx.userId).map((w) => w.slot);
+    const mine = ctx.ap.parseItemSends(logFile).filter((s) => mySlots.includes(s.receiver));
     const prefs = ctx.db.getPreference(ctx.userId);
     const seen = prefs.lastReceivedIndex?.[mw.name] || 0;
     const scope = ctx.options.scope || 'new';
@@ -645,8 +646,8 @@ const handlers = {
         : `Nothing new since your last /received in **${mw.name}** (${mine.length} received in total — /received scope: all for the full list).`;
     }
     const header = scope === 'all'
-      ? `**Items received by ${player.slot}** (multiworld ${mw.name}) — full list (${mine.length}):`
-      : `**Items received by ${player.slot}** (multiworld ${mw.name}) — new since last check:`;
+      ? `**Items received by your slots (${mySlots.join(', ')})** (multiworld ${mw.name}) — full list (${mine.length}):`
+      : `**Items received by your slots (${mySlots.join(', ')})** (multiworld ${mw.name}) — new since last check:`;
     const lines = [header];
     items.forEach((s, i) => {
       const idx = (scope === 'all' ? i : seen + i) + 1;
@@ -676,14 +677,17 @@ const handlers = {
     if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
     const opt = ctx.options.player;
     const mention = opt.match(/^<@!?(\d+)>$/);
-    const targetUserId = mention ? mention[1] : null;
-    const slotName = mention ? null : opt;
-    const player = targetUserId ? ctx.db.getPlayer(targetUserId) : null;
-    const slot = slotName || player?.slot;
-    if (!slot) throw new UserError(`No registered player matches "${opt}".`);
-    const res = await ctx.ap.say(ctx.config, mw, slot, '!release');
-    const reply = res.replies?.length ? `\nServer: ${res.replies.join(' ')}` : '';
-    return `✅ Released **${slot}** in multiworld **${mw.name}** — all their remaining items are sent out.${reply}`;
+    const slots = mention
+      ? ctx.db.getWorlds(mention[1]).map((w) => w.slot)
+      : [opt];
+    if (!slots.length || !slots[0]) throw new UserError(`No registered player matches "${opt}".`);
+    const replies = [];
+    for (const slot of slots) {
+      const res = await ctx.ap.say(ctx.config, mw, slot, '!release');
+      if (res.replies?.length) replies.push(...res.replies);
+    }
+    const reply = replies.length ? `\nServer: ${replies.join(' ')}` : '';
+    return `✅ Released ${slots.map((s2) => `**${s2}**`).join(', ')} in multiworld **${mw.name}** — all their remaining items are sent out.${reply}`;
   },
 
   async players(ctx) {
@@ -700,9 +704,10 @@ const handlers = {
         } catch { live = null; } // server unreachable — just omit statuses
       }
       for (const userId of userIdsOf(mw)) {
-        const p = ctx.db.getPlayer(userId);
-        const online = live && p && live.has(p.slot) ? ` — ${statusName(live.get(p.slot))}` : '';
-        lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}${online}`);
+        for (const world of ctx.db.getWorlds(userId)) {
+          const online = live && live.has(world.slot) ? ` — ${statusName(live.get(world.slot))}` : '';
+          lines.push(`• <@${userId}> — slot **${world.slot}** (${world.game})${blockedTag(userId)}${online}`);
+        }
       }
       if (!lines[1]) lines.push('(none yet — players use /join)');
       return lines.join('\n');
@@ -710,7 +715,11 @@ const handlers = {
     const lines = ['**Registered players:**'];
     const entries = Object.entries(ctx.db.data.players);
     if (!entries.length) lines.push('(none yet — anyone can /register)');
-    for (const [userId, p] of entries) lines.push(`• <@${userId}> — **${p.slot}** (${p.game})${blockedTag(userId)}`);
+    for (const userId of Object.keys(ctx.db.data.players)) {
+      for (const world of ctx.db.getWorlds(userId)) {
+        lines.push(`• <@${userId}> — **${world.slot}** (${world.game})${blockedTag(userId)}`);
+      }
+    }
     return lines.join('\n');
   },
 

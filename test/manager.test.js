@@ -70,10 +70,28 @@ test('stagePlayers stages each (player, mw) member once even with duplicate ids'
   const config = { dataDir, apDir: dataDir };
   const db = new Store(path.join(dataDir, 'db.json'));
   db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
-  fs.mkdirSync(path.join(dataDir, 'players'), { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'players', 'u1.yaml'), 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n');
+  fs.mkdirSync(path.join(dataDir, 'players', 'u1'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'players', 'u1', 'Alice.yaml'), 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n');
   const mw = { name: 'g', userIds: ['u1', 'u1'] };
   const staged = stagePlayers(config, db, mw);
   assert.deepEqual(staged, ['Alice']);
   assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')), ['Alice.yaml']);
+});
+
+test('stagePlayers stages every world (slot) of every member user', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-stage2-'));
+  const config = { dataDir, apDir: dataDir };
+  const db = new Store(path.join(dataDir, 'db.json'));
+  db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
+  db.setPlayer('u1', { slot: 'Alice2', game: 'HollowKnight' });
+  db.setPlayer('u2', { slot: 'Bob', game: 'ChecksFinder' });
+  fs.mkdirSync(path.join(dataDir, 'players', 'u1'), { recursive: true });
+  fs.mkdirSync(path.join(dataDir, 'players', 'u2'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'players', 'u1', 'Alice.yaml'), 'name: Alice\n');
+  fs.writeFileSync(path.join(dataDir, 'players', 'u1', 'Alice2.yaml'), 'name: Alice2\n');
+  fs.writeFileSync(path.join(dataDir, 'players', 'u2', 'Bob.yaml'), 'name: Bob\n');
+  const mw = { name: 'g', userIds: ['u1', 'u2'] };
+  const staged = stagePlayers(config, db, mw);
+  assert.deepEqual(staged.sort(), ['Alice', 'Alice2', 'Bob']);
+  assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')).sort(), ['Alice.yaml', 'Alice2.yaml', 'Bob.yaml']);
 });

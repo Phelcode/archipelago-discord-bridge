@@ -90,3 +90,22 @@ test('games with no blocked players are not even read; non-running/dead games sk
   assert.equal(dms.length, 1);
   assert.equal(db.getMultiworld('g').logOffset, before);
 });
+
+test('a blocked user gets DMs for items sent to any of their slots', async () => {
+  const { config, db } = makeEnv();
+  db.setPlayer('u1', { slot: 'Alice', game: 'G' });
+  db.setPlayer('u1', { slot: 'Alice2', game: 'G' });
+  db.setPreference('u1', 'blocked', true);
+  db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['u1'] });
+  writeLog(config, db.getMultiworld('g'), [
+    '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Bob sent Map Bombs to Alice (Tile 3)',
+    '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Key to Alice2 (Tile 7)',
+  ]);
+  const ap = apStub();
+  const dms = [];
+  await pollRunningMultiworlds(config, db, ap, async (uid, text) => { dms.push([uid, text]); });
+  assert.equal(dms.length, 2);
+  assert.ok(dms.every(([uid]) => uid === 'u1'));
+  assert.match(dms[1][1], /Key/);
+  assert.equal(db.getPreference('u1').lastReceivedIndex.g, 2);
+});
