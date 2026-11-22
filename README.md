@@ -14,9 +14,9 @@ Roles are assigned by Discord ID:
 | Role | Who | Can do |
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
-| **Host** | Assigned by the owner via `/role add host @user` | `/setup-game`, `/upload-apworld`, `/start`, `/stop`, `/delete-game` |
-| **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/game-stats` |
-| **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/game-stats`, `/players` |
+| **Host** | Assigned by the owner via `/role add host @user` | `/setup-multiworld`, `/upload-apworld`, `/start`, `/stop`, `/delete-multiworld` |
+| **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/multiworld-stats` |
+| **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/multiworld-stats`, `/players` |
 
 ## How it works
 
@@ -29,15 +29,15 @@ Roles are assigned by Discord ID:
   attachments; they are validated and stored under `DATA_DIR`. `.apworld` files are
   **global** — uploaded once, they are installed at generation/server start into
   `<AP_DIR>/custom_worlds` (where Archipelago looks when its install dir is
-  writable, as in this container) and into the per-game XDG `Archipelago/worlds`
-  fallback, so every game can use them.
-- Stats/hints probing goes through a **persistent per-game probe daemon** (`scripts/ap_probe.py --daemon`, managed in `src/ap/manager.js`): one websocket per player slot, kept open, so the AP server only broadcasts join/leave notices when a daemon starts or a socket drops — not on every poll.
+  writable, as in this container) and into the per-multiworld XDG `Archipelago/worlds`
+  fallback, so every multiworld can use them.
+- Stats/hints probing goes through a **persistent per-multiworld probe daemon** (`scripts/ap_probe.py --daemon`, managed in `src/ap/manager.js`): one websocket per player slot, kept open, so the AP server only broadcasts join/leave notices when a daemon starts or a socket drops — not on every poll.
 - Standalone monitor tool: `scripts/ap_probe.py --mode overview --port <port> [--password ...] --slots <one-slot-name>` connects **once** and reports room info plus every slot's hints and client status (datastorage reads are global). Per-slot check counts still need per-slot connections (`--mode stats`, via the daemon); unlocks come from the server log.
 - Item unlocks need no websocket at all: the watcher (`src/watcher.js`) tails each game's MultiServer log (every send is logged with a timestamp) and DMs players who ran `/block` when new items are sent to them; `/received` reads the same log. Only games with a blocked player are tailed, and only the recipient's last-seen index advances (keeps `/received scope: new` accurate).
-- `/start` runs Archipelago's `Generate.py` first if the game hasn't been
-  generated yet (seed from the `/setup-game` form, random if empty), producing a
+- `/start` runs Archipelago's `Generate.py` first if the multiworld hasn't been
+  generated yet (seed from the `/setup-multiworld` form, random if empty), producing a
   `.archipelago` multidata archive, then launches `MultiServer.py` for it;
-  `/stats`, `/game-stats` and
+  `/stats`, `/multiworld-stats` and
   `/hints` query the running server over its websocket protocol as a spectator
   (`scripts/ap_probe.py`) and report checks per player, completion status, hint
   points, gamewide totals and hints.
@@ -124,23 +124,23 @@ Roles are assigned by Discord ID:
 - `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]` (for a running game, also shows each player's live connection status: offline/connected/ready/playing/goal reached)
 - `/release player: [game:]` — [host] release a player (same as AP `!release`: all their remaining items are sent out). `player:` is required (slot name or @user); game servers are spawned with `--release_mode enabled` so this works
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
-- `/setup-game` — host: create a game session (always opens a modal: name + optional password + optional seed, random if empty; discards previous player registrations/yamls — everyone must `/register` again)
+- `/setup-multiworld` — host: create a multiworld (always opens a modal: name + optional password + optional seed, random if empty; discards previous player registrations/yamls — everyone must `/register` again)
 - `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any game)
 - `/start game: [port:]` — host: generate the multiworld if needed, then start the Archipelago server
 - `/stop game:` — host: stop the server
 - `/status [game:] [scope:]` — everyone: session/server status. Without `game:`, lists games — **active ones by default** (started or waiting to be started); `scope: finished` shows stopped games, `scope: all` shows everything. With `game:`, shows that one game regardless of scope
-- `/delete-game game:` — host: stop the server if running, then delete the game session and its files
+- `/delete-multiworld game:` — host: stop the server if running, then delete the multiworld and its files
 - `/stats [game:]` — everyone: checks per player (`found/total`, %, status, hint points)
-- `/game-stats [game:]` — everyone: gamewide totals, hints, seed
+- `/multiworld-stats [game:]` — everyone: gamewide totals, hints, seed
 - `/hints [game:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
 - `/received [game:] [scope:]` — players: items sent to you (what was unlocked for you, by whom, when). Default `scope: new` shows only items since you last ran it; `scope: all` shows the full list. "When" is read from the server log
 - `/block` / `/unblock` — mark yourself blocked (default unblocked). While blocked, a background watcher DMs you whenever someone sends you an item in a running game (polls every `WATCH_INTERVAL_MS`, default 30s)
 - `/role add|remove|list` — owner: manage host roles
 
-Typical flow: owner runs `/role add host @someone` → host runs `/setup-game`
-(this wipes previous players/yamls) → players `/register game: <name>` → host
+Typical flow: owner runs `/role add host @someone` → host runs `/setup-multiworld`
+(this wipes previous players/yamls) → players `/register multiworld: <name>` → host
 `/upload-apworld` (optional) → host `/start` (generates the multiworld if needed,
-then runs the server) → everyone watches `/stats` and `/game-stats`, players check `/hints`.
+then runs the server) → everyone watches `/stats` and `/multiworld-stats`, players check `/hints`.
 
 ## Configuration (`.env`)
 

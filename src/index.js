@@ -30,38 +30,38 @@ function createHealthServer(config) {
 // their Archipelago server is spawned again (reusing the existing multiworld)
 // on their old port or the next free one. Games stuck in 'generating', or
 // running without a multiworld, are marked stopped.
-export async function restartRunningGames(config, db, apImpl = ap) {
-  for (const game of db.listGames()) {
-    if (game.status === 'generating') {
-      game.status = 'stopped';
-      db.setGame(game.name, game);
+export async function restartRunningMultiworlds(config, db, apImpl = ap) {
+  for (const mw of db.listMultiworlds()) {
+    if (mw.status === 'generating') {
+      mw.status = 'stopped';
+      db.setMultiworld(mw.name, mw);
     }
   }
-  const running = db.listGames().filter((g) => g.status === 'running');
-  for (const game of running) {
-    if (!game.multidata || !fs.existsSync(game.multidata)) {
-      game.status = 'stopped';
-      db.setGame(game.name, game);
-      console.warn(`[boot] game "${game.name}" was running but has no generated multiworld; marked stopped`);
+  const running = db.listMultiworlds().filter((g) => g.status === 'running');
+  for (const mw of running) {
+    if (!mw.multidata || !fs.existsSync(mw.multidata)) {
+      mw.status = 'stopped';
+      db.setMultiworld(mw.name, mw);
+      console.warn(`[boot] multiworld "${mw.name}" was running but has no generated multiworld; marked stopped`);
       continue;
     }
-    const used = new Set(db.listGames().filter((g) => g.name !== game.name && g.port).map((g) => g.port));
-    let port = game.port && !used.has(game.port) ? game.port : config.basePort;
+    const used = new Set(db.listMultiworlds().filter((g) => g.name !== mw.name && g.port).map((g) => g.port));
+    let port = mw.port && !used.has(mw.port) ? mw.port : config.basePort;
     while (used.has(port) || (await apImpl.isPortListening(port))) port += 1;
     try {
-      const { pid, logFile } = apImpl.startGame(config, db, game, port);
+      const { pid, logFile } = apImpl.startMultiworld(config, db, mw, port);
       const up = await apImpl.waitForPort(port, 15000);
       if (!up) throw new Error(`server did not come up on port ${port} (see ${logFile})`);
-      game.port = port;
-      game.pid = pid;
-      game.startedAt = new Date().toISOString();
-      db.setGame(game.name, game);
-      console.log(`[boot] restarted running game "${game.name}" on ${config.publicHost}:${port}`);
+      mw.port = port;
+      mw.pid = pid;
+      mw.startedAt = new Date().toISOString();
+      db.setMultiworld(mw.name, mw);
+      console.log(`[boot] restarted running multiworld "${mw.name}" on ${config.publicHost}:${port}`);
     } catch (err) {
-      try { apImpl.stopGame(config, game); } catch { /* already dead */ }
-      game.status = 'stopped';
-      db.setGame(game.name, game);
-      console.error(`[boot] failed to restart game "${game.name}": ${err.message}`);
+      try { apImpl.stopMultiworld(config, mw); } catch { /* already dead */ }
+      mw.status = 'stopped';
+      db.setMultiworld(mw.name, mw);
+      console.error(`[boot] failed to restart multiworld "${mw.name}": ${err.message}`);
     }
   }
 }
@@ -69,7 +69,7 @@ export async function restartRunningGames(config, db, apImpl = ap) {
 async function main() {
   const config = loadConfig();
   const db = new Store(path.join(config.dataDir, 'db.json'));
-  await restartRunningGames(config, db);
+  await restartRunningMultiworlds(config, db);
   const client = createDiscordClient({ config, db });
   client.once(Events.ClientReady, (readyClient) => {
     scheduleCommandRegistration(readyClient, config, { guildIds: config.discordGuildIds, definitions: COMMAND_DEFINITIONS });

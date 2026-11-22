@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { ModalBuilder, LabelBuilder, FileUploadBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { roleOf, canHost, isOwner } from './permissions.js';
-import { playerIdsOf } from '../store.js';
+import { userIdsOf } from '../store.js';
 import * as ap from '../ap/manager.js';
 
 export class UserError extends Error {}
@@ -13,14 +13,14 @@ const STRING = 3;
 const INTEGER = 4;
 const USER = 6;
 
-const gameOption = (required) => ({
-  name: 'game', description: 'Game session name', type: STRING, required,
+const multiworldOption = (required) => ({
+  name: 'multiworld', description: 'Multiworld name', type: STRING, required,
 });
 
 export const COMMAND_DEFINITIONS = [
   { name: 'commands', description: 'List all commands with a one-line summary' },
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
-  { name: 'register', description: 'Register as a player (modal form for your .yaml); game: also joins that session', options: [gameOption(false)] },
+  { name: 'register', description: 'Register as a player (modal form for your .yaml); game: also joins that session', options: [multiworldOption(false)] },
   { name: 'unregister', description: 'Remove your player registration' },
   {
     name: 'profile',
@@ -38,49 +38,49 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
-  { name: 'join', description: 'Join a game session with your registered player yaml', options: [gameOption(true)] },
-  { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
+  { name: 'join', description: 'Join a multiworld with your registered player yaml', options: [multiworldOption(true)] },
+  { name: 'leave', description: 'Leave a multiworld', options: [multiworldOption(true)] },
   {
     name: 'release',
     description: '[host] Release a player (like AP !release): sends out all their remaining items',
     options: [
       { name: 'player', description: 'Slot name or @user to release', type: STRING, required: true },
-      gameOption(false),
+      multiworldOption(false),
     ],
   },
-  { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
-  { name: 'setup-game', description: '[host] Create a new game session (opens a form)', options: [] },
-  { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every game; opens an upload form)', options: [] },
+  { name: 'players', description: 'List registered players (and players of a mw)', options: [multiworldOption(false)] },
+  { name: 'setup-multiworld', description: '[host] Create a new multiworld (opens a form)', options: [] },
+  { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every multiworld; opens an upload form)', options: [] },
   {
     name: 'start',
     description: '[host] Generate the multiworld if needed, then start the Archipelago server',
-    options: [gameOption(true), { name: 'port', description: 'Port to listen on (optional)', type: INTEGER, required: false }],
+    options: [multiworldOption(true), { name: 'port', description: 'Port to listen on (optional)', type: INTEGER, required: false }],
   },
-  { name: 'stop', description: '[host] Stop the Archipelago server for a game', options: [gameOption(true)] },
-  { name: 'delete-game', description: '[host] Delete a game session and its files', options: [gameOption(true)] },
+  { name: 'stop', description: '[host] Stop the Archipelago server for a multiworld', options: [multiworldOption(true)] },
+  { name: 'delete-multiworld', description: '[host] Delete a multiworld and its files', options: [multiworldOption(true)] },
   {
     name: 'status',
-    description: 'Show game sessions and server status (active games by default)',
+    description: 'Show multiworlds and server status (active games by default)',
     options: [
-      gameOption(false),
+      multiworldOption(false),
       {
         name: 'scope', description: 'Which games to list', type: STRING, required: false,
         choices: [
           { name: 'active — started or waiting to be started (default)', value: 'active' },
           { name: 'finished — stopped games', value: 'finished' },
-          { name: 'all — every game', value: 'all' },
+          { name: 'all — every multiworld', value: 'all' },
         ],
       },
     ],
   },
-  { name: 'stats', description: 'Per-player stats: checks found / total and completion status', options: [gameOption(false)] },
-  { name: 'game-stats', description: 'Gamewide stats: total checks, found, hints, seed', options: [gameOption(false)] },
-  { name: 'hints', description: 'Show your hints (if hints are enabled)', options: [gameOption(false)] },
+  { name: 'stats', description: 'Per-player stats: checks found / total and completion status', options: [multiworldOption(false)] },
+  { name: 'multiworld-stats', description: 'Gamewide stats: total checks, found, hints, seed', options: [multiworldOption(false)] },
+  { name: 'hints', description: 'Show your hints (if hints are enabled)', options: [multiworldOption(false)] },
   {
     name: 'received',
-    description: 'Items sent to you in a game (what was unlocked for you, by whom, when)',
+    description: 'Items sent to you in a multiworld (what was unlocked for you, by whom, when)',
     options: [
-      gameOption(false),
+      multiworldOption(false),
       {
         name: 'scope', description: 'Which items to show', type: STRING, required: false,
         choices: [
@@ -264,15 +264,15 @@ export const PERMISSIONS = {
   leave: 'all',
   release: 'host',
   players: 'all',
-  'setup-game': 'host',
+  'setup-multiworld': 'host',
   'upload-apworld': 'host',
   start: 'host',
   stop: 'host',
-  'delete-game': 'host',
+  'delete-multiworld': 'host',
   role: 'owner',
   status: 'all',
   stats: 'all',
-  'game-stats': 'all',
+  'multiworld-stats': 'all',
   hints: 'all',
   received: 'all',
   block: 'all',
@@ -284,11 +284,11 @@ export const EPHEMERAL_COMMANDS = new Set(['register', 'unregister', 'profile', 
 // Modals (components v2: File Upload type 19 / Text Input type 4 inside a Label).
 export const MODAL_REGISTER = 'bridge_register';
 export const MODAL_UPLOAD_APWORLD = 'bridge_upload_apworld';
-export const MODAL_SETUP_GAME = 'bridge_setup_game';
+export const MODAL_SETUP_MULTIWORLD = 'bridge_setup_multiworld';
 export const MODAL_PERMISSIONS = {
   [MODAL_REGISTER]: 'all',
   [MODAL_UPLOAD_APWORLD]: 'host',
-  [MODAL_SETUP_GAME]: 'host',
+  [MODAL_SETUP_MULTIWORLD]: 'host',
 };
 
 const fileUploadField = (customId, labelText) =>
@@ -322,10 +322,10 @@ export function uploadApworldModal() {
 
 export function setupGameModal() {
   return new ModalBuilder()
-    .setCustomId(MODAL_SETUP_GAME)
-    .setTitle('Create game session')
+    .setCustomId(MODAL_SETUP_MULTIWORLD)
+    .setTitle('Create multiworld')
     .addLabelComponents(
-      textField('name', 'Game session name'),
+      textField('name', 'Multiworld name'),
       textField('password', 'Server password (optional)', { required: false }),
       textField('seed', 'Seed (optional, random if empty)', { required: false, maxLength: 20 }),
     );
@@ -335,7 +335,7 @@ export function setupGameModal() {
 export const ALWAYS_MODAL = {
   register: registerModal,
   'upload-apworld': uploadApworldModal,
-  'setup-game': setupGameModal,
+  'setup-multiworld': setupGameModal,
 };
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
@@ -346,18 +346,18 @@ export const COMMAND_SUMMARIES = {
   register: 'Register as a player (upload your .yaml in the form); game: auto-joins that session',
   unregister: 'Remove your player registration',
   profile: 'Your role/registration; set private or public replies',
-  join: 'Join a game session with your registered yaml',
-  leave: 'Leave a game session',
+  join: 'Join a multiworld with your registered yaml',
+  leave: 'Leave a multiworld',
   release: '[host] Release a player (AP !release) — sends out all their remaining items',
-  players: 'List registered players (🔒 = blocked), or players of one game',
-  'setup-game': '[host] Create a game session (opens a form)',
-  'upload-apworld': '[host] Upload a .apworld (usable in every game; opens a form)',
+  players: 'List registered players (🔒 = blocked), or players of one multiworld',
+  'setup-multiworld': '[host] Create a multiworld (opens a form)',
+  'upload-apworld': '[host] Upload a .apworld (usable in every multiworld; opens a form)',
   start: '[host] Generate the multiworld if needed, then start the server',
   stop: '[host] Stop the server',
-  'delete-game': '[host] Delete a game session and its files',
-  status: 'Game sessions and server status (active by default; scope: finished|all)',
+  'delete-multiworld': '[host] Delete a multiworld and its files',
+  status: 'Multiworlds and server status (active by default; scope: finished|all)',
   stats: 'Per-player checks found/total and completion status',
-  'game-stats': 'Gamewide totals: checks, hints, seed',
+  'multiworld-stats': 'Gamewide totals: checks, hints, seed',
   hints: 'Your hints (if hints are enabled)',
   received: 'Items sent to you (what/who/when) — new since last check by default, scope: all for the full list',
   block: 'Mark yourself blocked — get a DM when someone sends you an item',
@@ -369,9 +369,9 @@ export const COMMAND_SUMMARIES = {
 // generating / generated). "Finished" games are stopped.
 const ACTIVE_STATUSES = new Set(['setup', 'generating', 'generated', 'running']);
 
-function formatGameLine(ctx, g) {
+function formatMultiworldLine(ctx, g) {
   const alive = g.status === 'running' && ctx.ap.isServerProcessAlive(g);
-  const players = playerIdsOf(g).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
+  const players = userIdsOf(g).map((id) => ctx.db.getPlayer(id)?.slot || id).join(', ') || 'none';
   return [
     `**${g.name}** — status: ${alive ? 'running' : g.status}${alive && g.port ? ` on ${ctx.config.publicHost}:${g.port}` : ''}`,
     `  players: ${players} | seed: ${g.seed ?? 'not generated'}`,
@@ -382,64 +382,64 @@ export function statusName(status) {
   return STATUS_NAMES[status] ?? `status ${status}`;
 }
 
-function joinGame(ctx, game) {
-  game.playerIds = game.playerIds || [];
-  if (!game.playerIds.includes(ctx.userId)) game.playerIds.push(ctx.userId);
-  ctx.db.setGame(game.name, game);
+function joinMultiworld(ctx, mw) {
+  mw.userIds = mw.userIds || [];
+  if (!mw.userIds.includes(ctx.userId)) mw.userIds.push(ctx.userId);
+  ctx.db.setMultiworld(mw.name, mw);
 }
 
-function resolveGame(ctx, name) {
+function resolveMultiworld(ctx, name) {
   const db = ctx.db;
-  const games = db.listGames();
+  const mws = db.listMultiworlds();
   if (name) {
-    const game = db.getGame(ctx.ap.slugify(name));
-    if (!game) {
-      throw new UserError(`Unknown game "${name}".${games.length ? ` Known games: ${games.map((g) => g.name).join(', ')}` : ''}`);
+    const mw = db.getMultiworld(ctx.ap.slugify(name));
+    if (!mw) {
+      throw new UserError(`Unknown multiworld "${name}".${mws.length ? ` Known multiworlds: ${mws.map((g) => g.name).join(', ')}` : ''}`);
     }
-    return game;
+    return mw;
   }
-  const running = games.filter((g) => g.status === 'running');
+  const running = mws.filter((g) => g.status === 'running');
   if (running.length === 1) return running[0];
-  if (running.length > 1) throw new UserError(`Multiple games are running; specify one: ${running.map((g) => g.name).join(', ')}`);
-  if (games.length === 1) return games[0];
-  if (games.length === 0) throw new UserError('No games have been set up yet. A host can create one with /setup-game.');
-  return games[games.length - 1];
+  if (running.length > 1) throw new UserError(`Multiple multiworlds are running; specify one: ${running.map((g) => g.name).join(', ')}`);
+  if (mws.length === 1) return mws[0];
+  if (mws.length === 0) throw new UserError('No multiworlds have been set up yet. A host can create one with /setup-multiworld.');
+  return games[mws.length - 1];
 }
 
-// Generates the multiworld if the game doesn't have one yet (called by
+// Generates the multiworld if it doesn't have one yet (called by
 // /start). Returns the generation result when a generation ran, null when an
 // existing multiworld was reused (kept across restarts, so the seed is stable).
-async function ensureGenerated(ctx, game) {
-  if (game.multidata && fs.existsSync(game.multidata)) return null;
-  let seed = game.requestedSeed;
+async function ensureGenerated(ctx, mw) {
+  if (mw.multidata && fs.existsSync(mw.multidata)) return null;
+  let seed = mw.requestedSeed;
   if (seed !== undefined && seed !== null && String(seed).trim() !== '') {
     seed = Number(seed);
     if (!Number.isInteger(seed)) throw new UserError('Seed must be an integer.');
   }
-  const prevStatus = game.status === 'generating' ? 'setup' : game.status;
-  game.status = 'generating';
-  ctx.db.setGame(game.name, game);
+  const prevStatus = mw.status === 'generating' ? 'setup' : mw.status;
+  mw.status = 'generating';
+  ctx.db.setMultiworld(mw.name, mw);
   let result;
   try {
-    result = await ctx.ap.generateGame(ctx.config, ctx.db, game, seed);
+    result = await ctx.ap.generateMultiworld(ctx.config, ctx.db, mw, seed);
   } catch (err) {
-    game.status = prevStatus;
-    ctx.db.setGame(game.name, game);
+    mw.status = prevStatus;
+    ctx.db.setMultiworld(mw.name, mw);
     throw err;
   }
-  game.status = 'generated';
-  game.multidata = result.multidata;
-  game.spoiler = result.spoiler;
-  game.seed = result.seed;
-  game.seedNumber = result.seedNumber;
-  game.generatedAt = new Date().toISOString();
-  ctx.db.setGame(game.name, game);
+  mw.status = 'generated';
+  mw.multidata = result.multidata;
+  mw.spoiler = result.spoiler;
+  mw.seed = result.seed;
+  mw.seedNumber = result.seedNumber;
+  mw.generatedAt = new Date().toISOString();
+  ctx.db.setMultiworld(mw.name, mw);
   return result;
 }
 
-function gamePlayerSlots(db, game) {
+function multiworldSlots(db, mw) {
   const slots = [];
-  for (const userId of playerIdsOf(game)) {
+  for (const userId of userIdsOf(mw)) {
     const player = db.getPlayer(userId);
     if (player) slots.push(player.slot);
   }
@@ -480,10 +480,10 @@ function validateApworld(filename, buffer) {
   }
 }
 
-function formatStats(config, game, probeResult) {
+function formatStats(config, mw, probeResult) {
   const room = probeResult.room || {};
   const lines = [
-    `**Stats for "${game.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''} — server on ${config.publicHost}:${game.port}`,
+    `**Stats for "${mw.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''} — server on ${config.publicHost}:${mw.port}`,
   ];
   for (const p of probeResult.players) {
     const pct = p.total > 0 ? Math.round((p.checked.length / p.total) * 100) : 0;
@@ -493,7 +493,7 @@ function formatStats(config, game, probeResult) {
   return lines.join('\n');
 }
 
-function formatGameStats(game, probeResult) {
+function formatGameStats(mw, probeResult) {
   const room = probeResult.room || {};
   let total = 0;
   let checked = 0;
@@ -513,7 +513,7 @@ function formatGameStats(game, probeResult) {
   }
   const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
   const lines = [
-    `**Gamewide stats for "${game.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''}`,
+    `**Gamewide stats for "${mw.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''}`,
     `Checks found: **${checked}/${total}** (${pct}%) — remaining: ${total - checked}`,
     `Players: ${probeResult.players.length}, completed (goal): ${completed}`,
     `Hints: ${hints} created, ${foundHints} found`,
@@ -540,25 +540,25 @@ const handlers = {
     }
     if (canHost(ctx.db, ctx.config, ctx.userId)) {
       lines.push(
-        '**Hosting a game**',
-        '1. `/setup-game` — create the session (form: name, optional password, optional seed)',
-        '2. Players `/register` (upload their yaml) and `/join game: <name>`',
-        '3. Optional: `/upload-apworld` — add a custom game (.apworld, usable in every game)',
-        '4. `/start game: <name>` — generates the multiworld and starts the server',
-        '5. `/stop game:` stops it, `/delete-game game:` removes it',
-        '6. `/release game: <name> player: <slot or @user>` — release a player who can\'t continue (sends out their remaining items)',
+        '**Hosting a multiworld**',
+        '1. `/setup-multiworld` — create the session (form: name, optional password, optional seed)',
+        '2. Players `/register` (upload their yaml) and `/join multiworld: <name>`',
+        '3. Optional: `/upload-apworld` — add a custom AP world package (.apworld, usable in every multiworld)',
+        '4. `/start multiworld: <name>` — generates the multiworld and starts the server',
+        '5. `/stop multiworld:` stops it, `/delete-multiworld multiworld:` removes it',
+        '6. `/release multiworld: <name> player: <slot or @user>` — release a player who can\'t continue (sends out their remaining items)',
       );
     } else if (ctx.db.getPlayer(ctx.userId)) {
       lines.push(
         '**Playing**',
-        '1. `/register game: <name>` — upload your yaml and join in one step (or `/register`, then `/join game: <name>`)',
-        '2. `/stats`, `/game-stats` — watch progress; `/hints`, `/received` — your hints and items',
+        '1. `/register multiworld: <name>` — upload your yaml and join in one step (or `/register`, then `/join multiworld: <name>`)',
+        '2. `/stats`, `/multiworld-stats` — watch progress; `/hints`, `/received` — your hints and items',
         '3. `/block` — get a DM when someone sends you an item; `/unblock` to stop',
       );
     } else {
       lines.push(
-        '**Spectating** — `/status`, `/stats`, `/game-stats`, `/players` work for everyone.',
-        'To play: `/register game: <name>` (uploads your player yaml and joins in one step).',
+        '**Spectating** — `/status`, `/stats`, `/multiworld-stats`, `/players` work for everyone.',
+        'To play: `/register multiworld: <name>` (uploads your player yaml and joins in one step).',
       );
     }
     lines.push('', '`/commands` lists everything; `/profile` sets private vs public replies.');
@@ -566,7 +566,7 @@ const handlers = {
   },
 
   async register(ctx) {
-    const targetGame = ctx.options.game ? resolveGame(ctx, ctx.options.game) : null;
+    const targetMultiworld = ctx.options.multiworld ? resolveMultiworld(ctx, ctx.options.multiworld) : null;
     const att = ctx.attachments.yaml || ctx.modal?.files?.yaml?.[0];
     if (!att) throw new UserError('Attach a .yaml file in the form.');
     if (!/\.ya?ml$/i.test(att.filename)) throw new UserError(`"${att.filename}" is not a .yaml file.`);
@@ -578,9 +578,9 @@ const handlers = {
     fs.mkdirSync(playersDir, { recursive: true });
     fs.writeFileSync(path.join(playersDir, `${ctx.userId}.yaml`), buffer);
     ctx.db.setPlayer(ctx.userId, { slot, game, registeredAt: new Date().toISOString() });
-    if (!targetGame) return `Registered as player **${slot}** (game: ${game}). Use /join to enter a game session.`;
-    joinGame(ctx, targetGame);
-    return `Registered as player **${slot}** (game: ${game}) and joined session **${targetGame.name}**.`;
+    if (!targetMultiworld) return `Registered as player **${slot}** (game: ${game}). Use /join multiworld: to enter a multiworld.`;
+    joinMultiworld(ctx, targetMultiworld);
+    return `Registered as player **${slot}** (game: ${game}) and joined multiworld **${targetMultiworld.name}**.`;
   },
 
   async unregister(ctx) {
@@ -628,25 +628,25 @@ const handlers = {
   async received(ctx) {
     const player = ctx.db.getPlayer(ctx.userId);
     if (!player) throw new UserError('You must /register first.');
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
     // Log-based: the MultiServer log records every item send with a
     // timestamp, so no websocket connection (and no join/leave notice).
-    const logFile = path.join(ctx.ap.gameDir(ctx.config, game), 'server.log');
+    const logFile = path.join(ctx.ap.multiworldDir(ctx.config, mw), 'server.log');
     const mine = ctx.ap.parseItemSends(logFile).filter((s) => s.receiver === player.slot);
     const prefs = ctx.db.getPreference(ctx.userId);
-    const seen = prefs.lastReceivedIndex?.[game.name] || 0;
+    const seen = prefs.lastReceivedIndex?.[mw.name] || 0;
     const scope = ctx.options.scope || 'new';
     const items = scope === 'all' ? mine : mine.slice(seen);
-    ctx.db.setPreference(ctx.userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [game.name]: mine.length });
+    ctx.db.setPreference(ctx.userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [mw.name]: mine.length });
     if (!items.length) {
       return scope === 'all'
-        ? `You have not received any items yet in **${game.name}**.`
-        : `Nothing new since your last /received in **${game.name}** (${mine.length} received in total — /received scope: all for the full list).`;
+        ? `You have not received any items yet in **${mw.name}**.`
+        : `Nothing new since your last /received in **${mw.name}** (${mine.length} received in total — /received scope: all for the full list).`;
     }
     const header = scope === 'all'
-      ? `**Items received by ${player.slot}** (game ${game.name}) — full list (${mine.length}):`
-      : `**Items received by ${player.slot}** (game ${game.name}) — new since last check:`;
+      ? `**Items received by ${player.slot}** (multiworld ${mw.name}) — full list (${mine.length}):`
+      : `**Items received by ${player.slot}** (multiworld ${mw.name}) — new since last check:`;
     const lines = [header];
     items.forEach((s, i) => {
       const idx = (scope === 'all' ? i : seen + i) + 1;
@@ -656,24 +656,24 @@ const handlers = {
   },
 
   async join(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
     const player = ctx.db.getPlayer(ctx.userId);
-    if (!player) throw new UserError('You must /register with your player yaml before joining a game.');
-    joinGame(ctx, game);
-    return `Joined game **${game.name}** as slot **${player.slot}**.`;
+    if (!player) throw new UserError('You must /register with your player yaml before joining a mw.');
+    joinMultiworld(ctx, mw);
+    return `Joined multiworld **${mw.name}** as slot **${player.slot}**.`;
   },
 
   async leave(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    game.playerIds = (game.playerIds || []).filter((id) => id !== ctx.userId);
-    ctx.db.setGame(game.name, game);
-    return `Left game **${game.name}**.`;
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    mw.userIds = (mw.userIds || []).filter((id) => id !== ctx.userId);
+    ctx.db.setMultiworld(mw.name, mw);
+    return `Left multiworld **${mw.name}**.`;
   },
 
   async release(ctx) {
     // Host-only is enforced by PERMISSIONS before this handler runs.
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
     const opt = ctx.options.player;
     const mention = opt.match(/^<@!?(\d+)>$/);
     const targetUserId = mention ? mention[1] : null;
@@ -681,25 +681,25 @@ const handlers = {
     const player = targetUserId ? ctx.db.getPlayer(targetUserId) : null;
     const slot = slotName || player?.slot;
     if (!slot) throw new UserError(`No registered player matches "${opt}".`);
-    const res = await ctx.ap.say(ctx.config, game, slot, '!release');
+    const res = await ctx.ap.say(ctx.config, mw, slot, '!release');
     const reply = res.replies?.length ? `\nServer: ${res.replies.join(' ')}` : '';
-    return `✅ Released **${slot}** in game **${game.name}** — all their remaining items are sent out.${reply}`;
+    return `✅ Released **${slot}** in multiworld **${mw.name}** — all their remaining items are sent out.${reply}`;
   },
 
   async players(ctx) {
     const blockedTag = (userId) => (ctx.db.getPreference(userId).blocked ? ' 🔒 blocked' : '');
-    if (ctx.options.game) {
-      const game = resolveGame(ctx, ctx.options.game);
-      const lines = [`**Players in "${game.name}" (${playerIdsOf(game).length}):**`];
+    if (ctx.options.multiworld) {
+      const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+      const lines = [`**Players in "${mw.name}" (${userIdsOf(mw).length}):**`];
       // live connection status from one overview probe (single connection)
       let live = null;
-      if (game.status === 'running') {
+      if (mw.status === 'running') {
         try {
-          const ov = await ctx.ap.probe(ctx.config, game, 'overview', null, 15000, gamePlayerSlots(ctx.db, game));
+          const ov = await ctx.ap.probe(ctx.config, mw, 'overview', null, 15000, multiworldSlots(ctx.db, mw));
           live = new Map(ov.players.map((p) => [p.name, p.status]));
         } catch { live = null; } // server unreachable — just omit statuses
       }
-      for (const userId of playerIdsOf(game)) {
+      for (const userId of userIdsOf(mw)) {
         const p = ctx.db.getPlayer(userId);
         const online = live && p && live.has(p.slot) ? ` — ${statusName(live.get(p.slot))}` : '';
         lines.push(`• <@${userId}> — slot ${p ? `**${p.slot}** (${p.game})` : '(registration missing)'}${blockedTag(userId)}${online}`);
@@ -714,29 +714,29 @@ const handlers = {
     return lines.join('\n');
   },
 
-  async 'setup-game'(ctx) {
+  async 'setup-multiworld'(ctx) {
     const name = String(ctx.options.name || ctx.modal?.fields?.name || '').trim();
-    if (!name) throw new UserError('Provide a game name.');
+    if (!name) throw new UserError('Provide a multiworld name.');
     const password = ctx.options.password || ctx.modal?.fields?.password || null;
     const seedRaw = String(ctx.options.seed ?? ctx.modal?.fields?.seed ?? '').trim();
     if (seedRaw !== '' && !Number.isInteger(Number(seedRaw))) throw new UserError('Seed must be an integer.');
     const slug = ctx.ap.slugify(name);
-    if (ctx.db.getGame(slug)) throw new UserError(`A game named "${name}" already exists.`);
-    // A new game discards previous player registrations and their uploaded
-    // yamls; everyone has to /register again for the new game.
+    if (ctx.db.getMultiworld(slug)) throw new UserError(`A game named "${name}" already exists.`);
+    // A new multiworld discards previous player registrations and their uploaded
+    // yamls; everyone has to /register again for the new mw.
     ctx.db.clearPlayers();
-    for (const existing of ctx.db.listGames()) {
-      existing.playerIds = [];
-      ctx.db.setGame(existing.name, existing);
+    for (const existing of ctx.db.listMultiworlds()) {
+      existing.userIds = [];
+      ctx.db.setMultiworld(existing.name, existing);
     }
     fs.rmSync(path.join(ctx.config.dataDir, 'players'), { recursive: true, force: true });
-    const game = {
+    const mw = {
       name: slug,
       displayName: name,
       password: password || null,
       createdBy: ctx.userId,
       status: 'setup',
-      playerIds: [],
+      userIds: [],
       requestedSeed: seedRaw || null,
       multidata: null,
       seed: null,
@@ -745,8 +745,8 @@ const handlers = {
       pid: null,
       createdAt: new Date().toISOString(),
     };
-    ctx.db.setGame(slug, game);
-    return `Created game **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
+    ctx.db.setMultiworld(slug, mw);
+    return `Created multiworld **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
   },
 
   async 'upload-apworld'(ctx) {
@@ -758,97 +758,97 @@ const handlers = {
     validateApworld(att.filename, buffer);
     const saved = ctx.ap.saveApworld(ctx.config, att.filename, buffer);
     const all = ctx.ap.listApworlds(ctx.config);
-    return `Uploaded **${saved}** — apworlds are global and used by every game (${all.length} stored: ${all.join(', ')}).`;
+    return `Uploaded **${saved}** — apworlds are global and used by every multiworld (${all.length} stored: ${all.join(', ')}).`;
   },
 
   async start(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status === 'running' && ctx.ap.isServerProcessAlive(game)) throw new UserError('This game is already running.');
-    const gen = await ensureGenerated(ctx, game);
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status === 'running' && ctx.ap.isServerProcessAlive(mw)) throw new UserError('This multiworld is already running.');
+    const gen = await ensureGenerated(ctx, mw);
     let port = ctx.options.port;
     if (!port) {
-      const used = new Set(ctx.db.listGames().map((g) => g.port).filter(Boolean));
+      const used = new Set(ctx.db.listMultiworlds().map((g) => g.port).filter(Boolean));
       port = ctx.config.basePort;
       while (used.has(port)) port += 1;
     }
-    const { pid, logFile } = ctx.ap.startGame(ctx.config, ctx.db, game, port);
+    const { pid, logFile } = ctx.ap.startMultiworld(ctx.config, ctx.db, mw, port);
     const up = await ctx.ap.waitForPort(port);
     if (!up) {
-      ctx.ap.stopGame(ctx.config, game);
+      ctx.ap.stopMultiworld(ctx.config, mw);
       throw new UserError(`Server did not start listening on port ${port}. See log: ${logFile}`);
     }
-    game.status = 'running';
-    game.port = port;
-    game.pid = pid;
-    game.startedAt = new Date().toISOString();
-    ctx.db.setGame(game.name, game);
+    mw.status = 'running';
+    mw.port = port;
+    mw.pid = pid;
+    mw.startedAt = new Date().toISOString();
+    ctx.db.setMultiworld(mw.name, mw);
     return [
-      gen ? `Generated multiworld for **${game.name}** (seed ${game.seedNumber}, id ${game.seed}; players: ${gen.players.join(', ')}; spoiler: \`${game.spoiler}\`).` : null,
-      `Server for **${game.name}** is running: \`${ctx.config.publicHost}:${port}\`${game.password ? ' (password required)' : ' (no password)'}.`,
-      `Seed: ${game.seedNumber ?? game.seed ?? '?'}, log: \`${logFile}\``,
+      gen ? `Generated multiworld for **${mw.name}** (seed ${mw.seedNumber}, id ${mw.seed}; players: ${gen.players.join(', ')}; spoiler: \`${mw.spoiler}\`).` : null,
+      `Server for **${mw.name}** is running: \`${ctx.config.publicHost}:${port}\`${mw.password ? ' (password required)' : ' (no password)'}.`,
+      `Seed: ${mw.seedNumber ?? mw.seed ?? '?'}, log: \`${logFile}\``,
     ].filter(Boolean).join('\n');
   },
 
   async stop(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    const stopped = ctx.ap.stopGame(ctx.config, game);
-    game.status = 'stopped';
-    game.stoppedAt = new Date().toISOString();
-    ctx.db.setGame(game.name, game);
-    return stopped ? `Stopped game **${game.name}**.` : `Game **${game.name}** was not running.`;
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    const stopped = ctx.ap.stopMultiworld(ctx.config, mw);
+    mw.status = 'stopped';
+    mw.stoppedAt = new Date().toISOString();
+    ctx.db.setMultiworld(mw.name, mw);
+    return stopped ? `Stopped multiworld **${mw.name}**.` : `Multiworld **${mw.name}** was not running.`;
   },
 
-  async 'delete-game'(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status === 'running') ctx.ap.stopGame(ctx.config, game);
-    ctx.db.removeGame(game.name);
-    fs.rmSync(ctx.ap.gameDir(ctx.config, game), { recursive: true, force: true });
-    return `Deleted game **${game.name}** (server stopped if it was running, session and files removed).`;
+  async 'delete-multiworld'(ctx) {
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status === 'running') ctx.ap.stopMultiworld(ctx.config, mw);
+    ctx.db.removeMultiworld(mw.name);
+    fs.rmSync(ctx.ap.multiworldDir(ctx.config, mw), { recursive: true, force: true });
+    return `Deleted multiworld **${mw.name}** (server stopped if it was running, multiworld and files removed).`;
   },
 
   async status(ctx) {
-    if (ctx.options.game) return formatGameLine(ctx, resolveGame(ctx, ctx.options.game));
+    if (ctx.options.multiworld) return formatMultiworldLine(ctx, resolveMultiworld(ctx, ctx.options.multiworld));
     const scope = ctx.options.scope || 'active';
-    const all = ctx.db.listGames();
-    const games = all.filter((g) => (scope === 'all' ? true : scope === 'finished' ? g.status === 'stopped' : ACTIVE_STATUSES.has(g.status)));
-    if (!all.length) return 'No games yet. A host can create one with /setup-game.';
-    if (!games.length) {
-      if (scope === 'finished') return 'No finished games. /status lists active games by default; /status scope: all lists everything.';
-      return 'No active games (started or waiting to be started). Finished games: /status scope: finished — everything: /status scope: all.';
+    const all = ctx.db.listMultiworlds();
+    const mws = all.filter((g) => (scope === 'all' ? true : scope === 'finished' ? g.status === 'stopped' : ACTIVE_STATUSES.has(g.status)));
+    if (!all.length) return 'No multiworlds yet. A host can create one with /setup-multiworld.';
+    if (!mws.length) {
+      if (scope === 'finished') return 'No finished multiworlds. /status lists active multiworlds by default; /status scope: all lists everything.';
+      return 'No active multiworlds (started or waiting to be started). Finished: /status scope: finished — everything: /status scope: all.';
     }
     const apworlds = ctx.ap.listApworlds(ctx.config);
-    const header = scope === 'all' ? '**All games**' : scope === 'finished' ? '**Finished games**' : '**Active games** (started or waiting to be started)';
-    const lines = [header, `Available .apworld files (used by every game): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
-    for (const g of games) lines.push(formatGameLine(ctx, g));
+    const header = scope === 'all' ? '**All multiworlds**' : scope === 'finished' ? '**Finished multiworlds**' : '**Active multiworlds** (started or waiting to be started)';
+    const lines = [header, `Available .apworld files (used by every multiworld): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
+    for (const g of mws) lines.push(formatMultiworldLine(ctx, g));
     return lines.join('\n');
   },
 
   async stats(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
-    const probeResult = await ctx.ap.probe(ctx.config, game, 'stats', null, 30000, gamePlayerSlots(ctx.db, game));
-    return formatStats(ctx.config, game, probeResult);
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
+    const probeResult = await ctx.ap.probe(ctx.config, mw, 'stats', null, 30000, multiworldSlots(ctx.db, mw));
+    return formatStats(ctx.config, mw, probeResult);
   },
 
-  async 'game-stats'(ctx) {
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
-    const probeResult = await ctx.ap.probe(ctx.config, game, 'stats', null, 30000, gamePlayerSlots(ctx.db, game));
-    return formatGameStats(game, probeResult);
+  async 'multiworld-stats'(ctx) {
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
+    const probeResult = await ctx.ap.probe(ctx.config, mw, 'stats', null, 30000, multiworldSlots(ctx.db, mw));
+    return formatGameStats(mw, probeResult);
   },
 
   async hints(ctx) {
     if (!ctx.config.hintsEnabled) throw new UserError('Hints are disabled on this bridge (HINTS_ENABLED=false).');
     const player = ctx.db.getPlayer(ctx.userId);
     if (!player) throw new UserError('You must /register first.');
-    const game = resolveGame(ctx, ctx.options.game);
-    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
-    const probeResult = await ctx.ap.probe(ctx.config, game, 'hints', null, 30000, gamePlayerSlots(ctx.db, game));
+    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
+    if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
+    const probeResult = await ctx.ap.probe(ctx.config, mw, 'hints', null, 30000, multiworldSlots(ctx.db, mw));
     const me = probeResult.players.find((p) => p.name === player.slot);
-    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running game.`);
+    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running mw.`);
     const hints = probeResult.hints?.[me.slot] || [];
-    if (!hints.length) return `No hints for **${player.slot}** in game **${game.name}** yet.`;
-    const lines = [`**Hints for ${player.slot}** (game ${game.name}):`];
+    if (!hints.length) return `No hints for **${player.slot}** in multiworld **${mw.name}** yet.`;
+    const lines = [`**Hints for ${player.slot}** (multiworld ${mw.name}):`];
     for (const h of hints) {
       lines.push(`• ${h.found ? '✅' : '🔎'} **${h.item}** is at **${h.location}** in ${h.finding_player_name}'s world${h.entrance ? ` (${h.entrance})` : ''}`);
     }
@@ -891,6 +891,6 @@ export async function handleModal(customId, ctx) {
   ctx.ap = ctx.ap || ap;
   if (customId === MODAL_REGISTER) return handlers.register(ctx);
   if (customId === MODAL_UPLOAD_APWORLD) return handlers['upload-apworld'](ctx);
-  if (customId === MODAL_SETUP_GAME) return handlers['setup-game'](ctx);
+  if (customId === MODAL_SETUP_MULTIWORLD) return handlers['setup-multiworld'](ctx);
   throw new UserError('Unknown form.');
 }

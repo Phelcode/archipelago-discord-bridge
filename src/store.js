@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const EMPTY = () => ({ hosts: [], players: {}, games: {}, preferences: {} });
+const EMPTY = () => ({ hosts: [], players: {}, multiworlds: {}, preferences: {} });
 
-// (player, game) memberships are unique: a Discord user appears at most once
-// per game, but may be in several games. Dedupe on read as well as on write.
-export function playerIdsOf(game) {
-  return [...new Set(game.playerIds || [])];
+// (player, mw) memberships are unique: a Discord user appears at most once
+// per mw, but may be in several games. Dedupe on read as well as on write.
+export function userIdsOf(mw) {
+  return [...new Set(mw.userIds || [])];
 }
 
 export class Store {
@@ -77,21 +77,21 @@ export class Store {
     this.save();
   }
 
-  getGame(name) {
-    return this.data.games[name] || null;
+  getMultiworld(name) {
+    return this.data.multiworlds[name] || null;
   }
 
-  setGame(name, game) {
-    this.data.games[name] = game;
+  setMultiworld(name, mw) {
+    this.data.multiworlds[name] = mw;
     this.save();
   }
 
-  removeGame(name) {
-    delete this.data.games[name];
+  removeMultiworld(name) {
+    delete this.data.multiworlds[name];
     this.save();
   }
 
-  listGames() {
-    return Object.values(this.data.games);
+  listMultiworlds() {
+    return Object.values(this.data.multiworlds);
   }
 }

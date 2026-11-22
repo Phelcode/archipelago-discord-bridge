@@ -16,14 +16,14 @@ test('store persists hosts, players and games', () => {
   store.addHost('111');
   assert.deepEqual(store.data.hosts, ['111']);
   store.setPlayer('222', { slot: 'Alice', game: 'ChecksFinder' });
-  store.setGame('mygame', { name: 'mygame', status: 'setup', playerIds: ['222'], apworlds: [] });
+  store.setMultiworld('mygame', { name: 'mygame', status: 'setup', userIds: ['222'], apworlds: [] });
   store.save();
 
   const reloaded = new Store(store.file);
   assert.equal(reloaded.isHost('111'), true);
   assert.equal(reloaded.isHost('999'), false);
   assert.equal(reloaded.getPlayer('222').slot, 'Alice');
-  assert.equal(reloaded.getGame('mygame').status, 'setup');
+  assert.equal(reloaded.getMultiworld('mygame').status, 'setup');
 });
 
 test('store remove operations', () => {
@@ -40,16 +40,16 @@ test('store starts empty when file is missing or corrupt', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-store-'));
   const file = path.join(dir, 'db.json');
   const store = new Store(file);
-  assert.deepEqual(store.data, { hosts: [], players: {}, games: {}, preferences: {} });
+  assert.deepEqual(store.data, { hosts: [], players: {}, multiworlds: {}, preferences: {} });
   fs.writeFileSync(file, '{not json');
   const store2 = new Store(file);
-  assert.deepEqual(store2.data, { hosts: [], players: {}, games: {}, preferences: {} });
+  assert.deepEqual(store2.data, { hosts: [], players: {}, multiworlds: {}, preferences: {} });
 });
 
 test('store persists per-user preferences and tolerates old db files', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-store-'));
   const file = path.join(dir, 'db.json');
-  fs.writeFileSync(file, JSON.stringify({ hosts: ['1'], players: {}, games: {} })); // no preferences key
+  fs.writeFileSync(file, JSON.stringify({ hosts: ['1'], players: {}, multiworlds: {} })); // no preferences key
   const store = new Store(file);
   assert.deepEqual(store.getPreference('1'), {});
   store.setPreference('1', 'privateResponses', true);

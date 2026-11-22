@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, gameDir } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
 
 test('resolveSeed passes through an explicit seed', () => {
@@ -24,7 +24,7 @@ test('resolveSeed generates a random seed when none is given', () => {
 
 test('slugify', () => {
   assert.equal(slugify('My Game!'), 'my-game');
-  assert.equal(slugify('---'), 'game');
+  assert.equal(slugify('---'), 'multiworld');
 });
 
 test('apworlds are stored globally and installed into every game', () => {
@@ -65,15 +65,15 @@ test('parseItemSends extracts timestamped item sends from a MultiServer log', ()
   assert.deepEqual(parseItemSends(path.join(dir, 'missing.log')), []);
 });
 
-test('stagePlayers stages each (player, game) member once even with duplicate ids', async () => {
+test('stagePlayers stages each (player, mw) member once even with duplicate ids', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-stage-'));
   const config = { dataDir, apDir: dataDir };
   const db = new Store(path.join(dataDir, 'db.json'));
   db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
   fs.mkdirSync(path.join(dataDir, 'players'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'players', 'u1.yaml'), 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n');
-  const game = { name: 'g', playerIds: ['u1', 'u1'] };
-  const staged = stagePlayers(config, db, game);
+  const mw = { name: 'g', userIds: ['u1', 'u1'] };
+  const staged = stagePlayers(config, db, mw);
   assert.deepEqual(staged, ['Alice']);
-  assert.deepEqual(fs.readdirSync(path.join(gameDir(config, game), 'Players')), ['Alice.yaml']);
+  assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')), ['Alice.yaml']);
 });

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { playerIdsOf } from '../store.js';
+import { userIdsOf } from '../store.js';
 
 // Archipelago accepts seeds in [0, 10^20); we stay well inside safe-integer
 // range. A random seed is always picked explicitly when none is given.
@@ -14,11 +14,11 @@ export function resolveSeed(seed) {
 
 export function slugify(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
-  return slug || 'game';
+  return slug || 'multiworld';
 }
 
-export function gameDir(config, game) {
-  return path.join(config.dataDir, 'games', slugify(game.name));
+export function multiworldDir(config, mw) {
+  return path.join(config.dataDir, 'multiworlds', slugify(mw.name));
 }
 
 function ensureDirs(dir) {
@@ -27,11 +27,11 @@ function ensureDirs(dir) {
   fs.mkdirSync(path.join(dir, 'output'), { recursive: true });
 }
 
-function apEnv(config, game) {
+function apEnv(config, mw) {
   return {
     ...process.env,
     SKIP_REQUIREMENTS_UPDATE: '1',
-    XDG_DATA_HOME: path.join(config.dataDir, 'xdg', slugify(game.name)),
+    XDG_DATA_HOME: path.join(config.dataDir, 'xdg', slugify(mw.name)),
   };
 }
 
@@ -39,7 +39,7 @@ function runProcess(config, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(config.apPython, args, {
       cwd: config.apDir,
-      env: options.env || apEnv(config, options.game || { name: 'default' }),
+      env: options.env || apEnv(config, options.multiworld || { name: 'default' }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -59,7 +59,7 @@ function runProcess(config, args, options = {}) {
 }
 
 // .apworld files are global: uploaded once, they are installed into every
-// game's world directory at generation time.
+// multiworld's world directory at generation time.
 export function apworldDir(config) {
   return path.join(config.dataDir, 'apworlds');
 }
@@ -84,12 +84,12 @@ export function saveApworld(config, filename, buffer) {
 // writable (our container runs as root, so it always is), and from
 // $XDG_DATA_HOME/Archipelago/worlds otherwise. Install into both so the
 // apworlds are found either way.
-export function installApworlds(config, game) {
+export function installApworlds(config, mw) {
   const srcDir = apworldDir(config);
   const files = listApworlds(config);
   const targets = [
     path.join(config.apDir, 'custom_worlds'),
-    path.join(config.dataDir, 'xdg', slugify(game.name), 'Archipelago', 'worlds'),
+    path.join(config.dataDir, 'xdg', slugify(mw.name), 'Archipelago', 'worlds'),
   ];
   for (const dir of targets) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -101,12 +101,12 @@ export function installApworlds(config, game) {
   return targets[0];
 }
 
-export function stagePlayers(config, db, game) {
-  const playersDir = path.join(gameDir(config, game), 'Players');
+export function stagePlayers(config, db, mw) {
+  const playersDir = path.join(multiworldDir(config, mw), 'Players');
   fs.rmSync(playersDir, { recursive: true, force: true });
   fs.mkdirSync(playersDir, { recursive: true });
   const staged = [];
-  for (const userId of playerIdsOf(game)) {
+  for (const userId of userIdsOf(mw)) {
     const player = db.getPlayer(userId);
     if (!player) continue;
     const src = path.join(config.dataDir, 'players', `${userId}.yaml`);
@@ -118,23 +118,23 @@ export function stagePlayers(config, db, game) {
   return staged;
 }
 
-export async function generateGame(config, db, game, seed) {
-  ensureDirs(gameDir(config, game));
-  installApworlds(config, game);
-  const staged = stagePlayers(config, db, game);
+export async function generateMultiworld(config, db, mw, seed) {
+  ensureDirs(multiworldDir(config, mw));
+  installApworlds(config, mw);
+  const staged = stagePlayers(config, db, mw);
   if (staged.length === 0) {
-    throw new Error('No players joined this game yet. Players must /register and /join first.');
+    throw new Error('No players joined this multiworld yet. Players must /register and /join first.');
   }
-  const outputDir = path.join(gameDir(config, game), 'output');
+  const outputDir = path.join(multiworldDir(config, mw), 'output');
   const seedNumber = resolveSeed(seed);
   const args = [
     path.join(config.apDir, 'Generate.py'),
-    '--player_files_path', path.join(gameDir(config, game), 'Players'),
+    '--player_files_path', path.join(multiworldDir(config, mw), 'Players'),
     '--outputpath', outputDir,
     '--log_level', 'warning',
     '--seed', String(seedNumber),
   ];
-  const { stdout } = await runProcess(config, args, { env: apEnv(config, game), game });
+  const { stdout } = await runProcess(config, args, { env: apEnv(config, mw), game: mw });
   const files = fs.readdirSync(outputDir).filter((f) => f.endsWith('.zip'));
   if (files.length === 0) throw new Error(`Generation produced no .zip output.\n${stdout.slice(-2000)}`);
   files.sort();
@@ -152,56 +152,56 @@ export async function generateGame(config, db, game, seed) {
 
 const runningServers = new Map();
 
-export function startGame(config, db, game, port) {
-  ensureDirs(gameDir(config, game));
-  installApworlds(config, game);
-  if (!game.multidata || !fs.existsSync(game.multidata)) {
+export function startMultiworld(config, db, mw, port) {
+  ensureDirs(multiworldDir(config, mw));
+  installApworlds(config, mw);
+  if (!mw.multidata || !fs.existsSync(mw.multidata)) {
     throw new Error('Game has not been generated yet.');
   }
-  const logFile = path.join(gameDir(config, game), 'server.log');
+  const logFile = path.join(multiworldDir(config, mw), 'server.log');
   const logStream = fs.openSync(logFile, 'a');
   const args = [
     path.join(config.apDir, 'MultiServer.py'),
-    game.multidata,
+    mw.multidata,
     '--host', '0.0.0.0',
     '--port', String(port),
     '--auto_shutdown', '0',
     '--loglevel', 'info',
     '--release_mode', 'enabled', // lets the bridge send !release as the target slot
   ];
-  if (game.password) args.push('--password', game.password);
+  if (mw.password) args.push('--password', mw.password);
   const child = spawn(config.apPython, args, {
     cwd: config.apDir,
-    env: apEnv(config, game),
+    env: apEnv(config, mw),
     stdio: ['ignore', logStream, logStream],
     detached: false,
   });
   child.unref();
-  runningServers.set(game.name, child);
+  runningServers.set(mw.name, child);
   return { pid: child.pid, logFile };
 }
 
-export function stopGame(config, game) {
-  closeProbeDaemon(game);
-  const child = runningServers.get(game.name);
+export function stopMultiworld(config, mw) {
+  closeProbeDaemon(mw);
+  const child = runningServers.get(mw.name);
   if (child) {
     try { child.kill('SIGTERM'); } catch { /* already dead */ }
-    runningServers.delete(game.name);
+    runningServers.delete(mw.name);
     return true;
   }
-  if (game.pid) {
-    try { process.kill(game.pid, 'SIGTERM'); return true; } catch { return false; }
+  if (mw.pid) {
+    try { process.kill(mw.pid, 'SIGTERM'); return true; } catch { return false; }
   }
   return false;
 }
 
-// One long-lived probe process per game, holding one websocket per player
+// One long-lived probe process per mw, holding one websocket per player
 // slot. Reusing the connections means the AP server sees a join/leave notice
 // only when the daemon starts or a socket drops — not on every poll.
 const probeDaemons = new Map(); // "name:port" -> daemon handle
 
-export function closeProbeDaemon(game) {
-  const key = `${game.name}:${game.port}`;
+export function closeProbeDaemon(mw) {
+  const key = `${mw.name}:${mw.port}`;
   const d = probeDaemons.get(key);
   if (d) {
     try { d.proc.kill(); } catch { /* already dead */ }
@@ -209,12 +209,12 @@ export function closeProbeDaemon(game) {
   }
 }
 
-async function daemonRequest(config, game, req, timeoutMs, knownSlots) {
-  const key = `${game.name}:${game.port}`;
+async function daemonRequest(config, mw, req, timeoutMs, knownSlots) {
+  const key = `${mw.name}:${mw.port}`;
   let d = probeDaemons.get(key);
   if (!d || d.dead) {
-    const args = [config.apProbeScript, '--daemon', '--host', '127.0.0.1', '--port', String(game.port), '--ap-version', config.apVersion, '--timeout', '20'];
-    if (game.password) args.push('--password', game.password);
+    const args = [config.apProbeScript, '--daemon', '--host', '127.0.0.1', '--port', String(mw.port), '--ap-version', config.apVersion, '--timeout', '20'];
+    if (mw.password) args.push('--password', mw.password);
     if (knownSlots.length) args.push('--slots', knownSlots.join(','));
     const proc = spawn(config.apPython, args, { env: { ...process.env, SKIP_REQUIREMENTS_UPDATE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
     d = { proc, dead: false, buf: '', waiters: [] };
@@ -228,7 +228,7 @@ async function daemonRequest(config, game, req, timeoutMs, knownSlots) {
         if (w) { try { w.resolve(JSON.parse(line)); } catch { w.resolve({ error: 'bad probe response' }); } }
       }
     });
-    proc.stderr.on('data', (c) => console.error(`[probe:${game.name}] ${String(c).trimEnd()}`));
+    proc.stderr.on('data', (c) => console.error(`[probe:${mw.name}] ${String(c).trimEnd()}`));
     proc.on('exit', (code) => {
       d.dead = true;
       if (probeDaemons.get(key) === d) probeDaemons.delete(key);
@@ -257,9 +257,9 @@ async function daemonRequest(config, game, req, timeoutMs, knownSlots) {
   });
 }
 
-export function isServerProcessAlive(game) {
-  if (!game.pid) return false;
-  try { process.kill(game.pid, 0); return true; } catch { return false; }
+export function isServerProcessAlive(mw) {
+  if (!mw.pid) return false;
+  try { process.kill(mw.pid, 0); return true; } catch { return false; }
 }
 
 export function isPortListening(port, host = '127.0.0.1', timeoutMs = 1000) {
@@ -307,19 +307,19 @@ export function parseItemSends(logFile) {
   }
 }
 
-export async function probe(config, game, mode, slot, timeoutMs, knownSlots, onlySlots) {
+export async function probe(config, mw, mode, slot, timeoutMs, knownSlots, onlySlots) {
   const slots = knownSlots || [];
   const req = { mode, slot: slot ?? null, only: onlySlots?.length ? onlySlots : null };
-  const response = await daemonRequest(config, game, req, timeoutMs, slots);
+  const response = await daemonRequest(config, mw, req, timeoutMs, slots);
   if (response.error) throw new Error(response.error);
   return response;
 }
 
-// Sends a text command (e.g. "!release") as the given slot over the game's
+// Sends a text command (e.g. "!release") as the given slot over the multiworld's
 // persistent probe daemon. Used by /release.
-export async function say(config, game, slotName, text) {
+export async function say(config, mw, slotName, text) {
   const req = { mode: 'say', name: slotName, text };
-  const response = await daemonRequest(config, game, req, 15000, [slotName]);
+  const response = await daemonRequest(config, mw, req, 15000, [slotName]);
   if (response.error) throw new Error(response.error);
   return response;
 }
