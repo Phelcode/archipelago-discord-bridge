@@ -4,10 +4,9 @@ A Node.js Discord app that bridges Discord roles to
 [Archipelago](https://archipelago.gg) multiworld hosting.
 
 It receives slash-command interactions over the **Discord gateway** via
-[discord.js](https://discord.js.org) (a `Client` with no intents): the app
-declares a bot user purely as a transport. Heartbeats, resume and sharding are
-handled by the library, it never reads message content, and **no public URL /
-HTTPS inbound endpoint is required**.
+[discord.js](https://discord.js.org) (a `Client` with no intents, so it never
+reads message content). Heartbeats, resume, sharding and REST rate limits are
+handled by the library; no public URL / HTTPS inbound endpoint is used.
 
 Roles are assigned by Discord ID:
 
@@ -15,16 +14,16 @@ Roles are assigned by Discord ID:
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
 | **Host** | Assigned by the owner via `/role add host @user` | `/setup-multiworld`, `/upload-apworld`, `/start`, `/stop`, `/delete-multiworld` |
-| **Player** | Anyone who runs `/register` with their player yaml | `/join`/`/leave` games, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/multiworld-stats` |
+| **Player** | Anyone who runs `/register` with a yaml per world | `/join`/`/leave` multiworlds, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/multiworld-stats` |
 | **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/multiworld-stats`, `/players` |
 
 ## How it works
 
 - The app connects to the Discord **gateway** with the bot token via discord.js and
-  handles `INTERACTION_CREATE` events (no intents needed, no public URL required).
-  Replies are sent with the interaction's built-in `reply`/`deferReply`/`editReply`/
-  `followUp` methods; file uploads from modals are downloaded from the attachment
-  URLs Discord provides.
+  handles `INTERACTION_CREATE` events (no intents needed, no public URL).
+  Replies use the interaction's built-in `reply`/`deferReply`/`editReply`/`followUp`
+  methods; file uploads from modals are downloaded from the attachment URLs Discord
+  provides.
 - Hosts upload `.apworld` files and players upload player `.yaml` files as Discord
   attachments; they are validated and stored under `DATA_DIR`. `.apworld` files are
   **global** — uploaded once, they are installed at generation/server start into
@@ -46,8 +45,7 @@ Roles are assigned by Discord ID:
 
 1. Create an application at <https://discord.com/developers/applications>.
    - Copy the **Application ID** and **Bot token**.
-   - On the *Bot* page, click **Add Bot** to declare a bot user (this is what enables
-     the gateway transport, so no public HTTPS interactions endpoint is needed).
+   - On the *Bot* page, click **Add Bot** (required for the gateway connection).
      Copy the token; no privileged intents are required.
    - Under *Installation*, enable **both** *Guild Install* and *User Install*
      (`integration_types: [0, 1]`), so the app can be added to servers **and** to
@@ -65,8 +63,7 @@ Roles are assigned by Discord ID:
      `DATA_DIR/commands-state.json`, so steady-state boots make **no** command
      API calls at all (bulk command PUTs are heavily rate-limited); when the set
      changes, one atomic PUT per scope runs with a log line per step and a 60s
-     retry loop. 429s on application routes surface immediately in the log
-     (route + retry_after) instead of waiting silently in the REST queue.
+     retry loop. 429s on application routes are logged with route + retry_after, and the scheduler waits out the cooldown before the next attempt.
    - Add the app to your server with the `bot applications.commands` scopes (the bot
      user joins; the app only answers interactions and needs no channel permissions),
      and/or to your user with `applications.commands`.
@@ -99,10 +96,10 @@ Roles are assigned by Discord ID:
    The container **updates itself to the newest version on boot**: the entrypoint
    pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
    to disable, or override `REPO_URL`/`REPO_BRANCH` for a fork. Runtime data lives in
-   `./data` (a volume), so updates never wipe games, uploads or role assignments.
-   Games that were **running when the container stopped are restarted automatically
-   on boot** (server respawned with the existing multiworld, on the old port or the
-   next free one); games interrupted mid-generation are marked stopped.
+   `./data` (a volume), so updates never wipe multiworlds, uploads or role assignments.
+   Multiworlds that are **running are restarted automatically on boot** (server
+   respawned with the existing multiworld, on the old port or the next free one);
+   multiworlds interrupted mid-generation are marked stopped.
 
    **Archipelago itself is not in this repo.** On boot the entrypoint clones
    [Archipelago](https://github.com/ArchipelagoMW/Archipelago) into
@@ -119,26 +116,26 @@ Roles are assigned by Discord ID:
 ## Commands
 
 - `/commands` — every command on its own line with a one-line summary
-- `/help` — short step-by-step intro for your role: hosts get create/host a game (incl. `/upload-apworld`), players get register (upload yaml) + join, spectators get what they can view
-- `/register [game:]` — register as a player (always opens a modal with a file-upload field for your player `.yaml` + optional slot-name field); with `game:` you join that session in the same step
-- `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]` (for a running game, also shows each player's live connection status: offline/connected/ready/playing/goal reached)
-- `/release player: [game:]` — [host] release a player (same as AP `!release`: all their remaining items are sent out). `player:` is required (slot name or @user); game servers are spawned with `--release_mode enabled` so this works
+- `/help` — short step-by-step intro for your role: hosts get create/host a multiworld (incl. `/upload-apworld`), players get register (upload a yaml per world) + join, spectators get what they can view
+- `/register [multiworld:]` — register a world/slot (always opens a modal with a file-upload field for your `.yaml` + optional slot-name field). Repeat to register more worlds (one yaml each); with `multiworld:` you join that multiworld in the same step
+- `/unregister`, `/profile [responses:]`, `/join multiworld:`, `/leave multiworld:`, `/players [multiworld:]` (for a running multiworld, also shows each slot's live connection status: offline/connected/ready/playing/goal reached)
+- `/release player: [multiworld:]` — [host] release a slot or user (same as AP `!release`: all remaining items are sent out). `player:` is required (slot name or @user; a user releases all their slots); servers are spawned with `--release_mode enabled`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
-- `/setup-multiworld` — host: create a multiworld (always opens a modal: name + optional password + optional seed, random if empty; discards previous player registrations/yamls — everyone must `/register` again)
-- `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any game)
-- `/start game: [port:]` — host: generate the multiworld if needed, then start the Archipelago server
-- `/stop game:` — host: stop the server
-- `/status [game:] [scope:]` — everyone: session/server status. Without `game:`, lists games — **active ones by default** (started or waiting to be started); `scope: finished` shows stopped games, `scope: all` shows everything. With `game:`, shows that one game regardless of scope
-- `/delete-multiworld game:` — host: stop the server if running, then delete the multiworld and its files
-- `/stats [game:]` — everyone: checks per player (`found/total`, %, status, hint points)
-- `/multiworld-stats [game:]` — everyone: gamewide totals, hints, seed
-- `/hints [game:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
-- `/received [game:] [scope:]` — players: items sent to you (what was unlocked for you, by whom, when). Default `scope: new` shows only items since you last ran it; `scope: all` shows the full list. "When" is read from the server log
-- `/block` / `/unblock` — mark yourself blocked (default unblocked). While blocked, a background watcher DMs you whenever someone sends you an item in a running game (polls every `WATCH_INTERVAL_MS`, default 30s)
+- `/setup-multiworld` — host: create a multiworld (always opens a modal: name + optional password + optional seed, random if empty) and reset player registrations — everyone must `/register` again
+- `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any multiworld)
+- `/start multiworld: [port:]` — host: generate the multiworld if needed, then start the Archipelago server
+- `/stop multiworld:` — host: stop the server
+- `/status [multiworld:] [scope:]` — everyone: multiworld/server status. Without `multiworld:`, lists multiworlds — **active ones by default** (started or waiting to be started); `scope: finished` shows stopped ones, `scope: all` shows everything. With `multiworld:`, shows that one regardless of scope
+- `/delete-multiworld multiworld:` — host: stop the server if running, then delete the multiworld and its files
+- `/stats [multiworld:]` — everyone: checks per slot (`found/total`, %, status, hint points)
+- `/multiworld-stats [multiworld:]` — everyone: multiworld-wide totals, hints, seed
+- `/hints [multiworld:]` — players: your own hints (disable with `HINTS_ENABLED=false`)
+- `/received [multiworld:] [scope:]` — players: items sent to your slots (what was unlocked for you, by whom, when). Default `scope: new` shows only items since you last ran it; `scope: all` shows the full list. "When" is read from the server log
+- `/block` / `/unblock` — mark yourself blocked (default unblocked). While blocked, a background watcher DMs you whenever someone sends you an item in a running multiworld (tails the server log every `WATCH_INTERVAL_MS`, default 30s)
 - `/role add|remove|list` — owner: manage host roles
 
 Typical flow: owner runs `/role add host @someone` → host runs `/setup-multiworld`
-(this wipes previous players/yamls) → players `/register multiworld: <name>` → host
+(resets player registrations) → players `/register multiworld: <name>` → host
 `/upload-apworld` (optional) → host `/start` (generates the multiworld if needed,
 then runs the server) → everyone watches `/stats` and `/multiworld-stats`, players check `/hints`.
 

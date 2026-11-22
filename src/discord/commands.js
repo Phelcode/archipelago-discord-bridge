@@ -236,7 +236,7 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
     if (stopped) return;
     const pending = notBefore - Date.now();
     if (pending > 0) {
-      console.log(`[commands] previous attempt was rate-limited; waiting ${Math.round(pending / 1000)}s before the next try`);
+      console.log(`[commands] a persisted rate-limit cooldown is still active; waiting ${Math.round(pending / 1000)}s before the next attempt`);
       await sleep(Math.ceil(pending / intervalMs) * intervalMs);
       if (stopped) return;
     }
@@ -331,7 +331,7 @@ export function setupGameModal() {
     );
 }
 
-// Commands that always answer with a modal instead of taking inline options.
+// Commands that always answer with a modal (forms support file uploads).
 export const ALWAYS_MODAL = {
   register: registerModal,
   'upload-apworld': uploadApworldModal,
@@ -587,7 +587,7 @@ const handlers = {
     if (!ctx.db.getPlayer(ctx.userId)) throw new UserError('You are not registered.');
     ctx.db.removePlayer(ctx.userId);
     try { fs.rmSync(path.join(ctx.config.dataDir, 'players', ctx.userId), { recursive: true, force: true }); } catch { /* ignore */ }
-    return 'Your player registration was removed.';
+    return 'Your registered worlds and yamls were removed.';
   },
 
   async profile(ctx) {
@@ -731,7 +731,7 @@ const handlers = {
     if (seedRaw !== '' && !Number.isInteger(Number(seedRaw))) throw new UserError('Seed must be an integer.');
     const slug = ctx.ap.slugify(name);
     if (ctx.db.getMultiworld(slug)) throw new UserError(`A game named "${name}" already exists.`);
-    // A new multiworld discards previous player registrations and their uploaded
+    // A new multiworld resets player registrations and their uploaded
     // yamls; everyone has to /register again for the new mw.
     ctx.db.clearPlayers();
     for (const existing of ctx.db.listMultiworlds()) {
@@ -755,7 +755,7 @@ const handlers = {
       createdAt: new Date().toISOString(),
     };
     ctx.db.setMultiworld(slug, mw);
-    return `Created multiworld **${slug}** (previous player registrations and yamls were discarded — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
+    return `Created multiworld **${slug}** (player registrations and yamls are reset — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
   },
 
   async 'upload-apworld'(ctx) {
@@ -854,7 +854,7 @@ const handlers = {
     if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
     const probeResult = await ctx.ap.probe(ctx.config, mw, 'hints', null, 30000, multiworldSlots(ctx.db, mw));
     const me = probeResult.players.find((p) => p.name === player.slot);
-    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running mw.`);
+    if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running multiworld.`);
     const hints = probeResult.hints?.[me.slot] || [];
     if (!hints.length) return `No hints for **${player.slot}** in multiworld **${mw.name}** yet.`;
     const lines = [`**Hints for ${player.slot}** (multiworld ${mw.name}):`];

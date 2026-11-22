@@ -136,7 +136,7 @@ test('setup-multiworld creates a game and join adds the player', async () => {
   assert.deepEqual(ctx.db.getMultiworld('my-game').userIds, ['user-1']);
 });
 
-test('setup-multiworld discards previous players and yamls', async () => {
+test('setup-multiworld resets player registrations and yamls', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
@@ -148,7 +148,7 @@ test('setup-multiworld discards previous players and yamls', async () => {
   ctx.options = { name: 'new-game' };
   const out = await handleCommand('setup-multiworld', ctx);
   assert.match(out, /new-game/);
-  assert.match(out, /discarded/);
+  assert.match(out, /reset/);
   assert.equal(ctx.db.getPlayer('user-1'), null);
   assert.deepEqual(ctx.db.data.players, {});
   assert.deepEqual(ctx.db.getMultiworld('old').userIds, []);
@@ -554,7 +554,7 @@ test('setup-multiworld rejects a non-integer seed in the form', async () => {
   await assert.rejects(() => handleCommand('setup-multiworld', ctx), /integer/);
 });
 
-test('start reuses an existing generation instead of regenerating', async () => {
+test('start reuses an existing generation', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   const zip = path.join(ctx.config.dataDir, 'x.zip');
   fs.writeFileSync(zip, 'PK');
@@ -707,7 +707,7 @@ test('a failed global PUT does not block guild registration and is rethrown', as
   assert.ok(calls.some((c) => c[0] === 'set' && c[1] === 'guild:g1'), 'guild PUT still happened');
 });
 
-test('scheduler waits out a 429 cooldown (rounded to the next tick) instead of retrying every tick', async () => {
+test('scheduler waits out a 429 cooldown, rounded up to the next tick', async () => {
   const config = tmpConfig();
   const { client } = mockClient();
   let n = 0;
@@ -728,7 +728,7 @@ test('scheduler waits out a 429 cooldown (rounded to the next tick) instead of r
   assert.ok(Date.now() - start >= 150, `should have waited ~200ms for the cooldown, took ${Date.now() - start}ms`);
 });
 
-test('a cooldown left by a previous run is persisted and honored across restarts (no API call during cooldown)', async () => {
+test('a persisted cooldown is honored across restarts (no API call during cooldown)', async () => {
   const config = tmpConfig();
   const notBefore = Date.now() + 300;
   fs.writeFileSync(path.join(config.dataDir, 'commands-state.json'), JSON.stringify({ notBefore })); // no hash -> not a success skip
@@ -796,7 +796,7 @@ test('(player, mw) membership is unique; a player can join multiple games', asyn
   assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']); // other game untouched
 
   // /players game: shows the count deduped
-  ctx.db.getMultiworld('g1').userIds.push('user-1'); // simulate a legacy duplicate
+  ctx.db.getMultiworld('g1').userIds.push('user-1'); // simulate a duplicate entry
   ctx.options = { multiworld: 'g1' };
   const out = await handleCommand('players', ctx);
   assert.match(out, /\(1\):/);

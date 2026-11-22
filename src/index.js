@@ -26,7 +26,7 @@ function createHealthServer(config) {
   return server;
 }
 
-// On boot, games that were running when the container stopped are restarted:
+// On boot, multiworlds marked running are restarted:
 // their Archipelago server is spawned again (reusing the existing multiworld)
 // on their old port or the next free one. Games stuck in 'generating', or
 // running without a multiworld, are marked stopped.
@@ -42,7 +42,7 @@ export async function restartRunningMultiworlds(config, db, apImpl = ap) {
     if (!mw.multidata || !fs.existsSync(mw.multidata)) {
       mw.status = 'stopped';
       db.setMultiworld(mw.name, mw);
-      console.warn(`[boot] multiworld "${mw.name}" was running but has no generated multiworld; marked stopped`);
+      console.warn(`[boot] multiworld "${mw.name}" is marked running but has no generated multiworld; marked stopped`);
       continue;
     }
     const used = new Set(db.listMultiworlds().filter((g) => g.name !== mw.name && g.port).map((g) => g.port));

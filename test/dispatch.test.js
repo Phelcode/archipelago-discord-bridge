@@ -119,7 +119,7 @@ test('delete-multiworld is host-only', async () => {
   assert.equal(calls.deferReply.length, 0);
 });
 
-test('always-modal commands open a modal instead of replying', async () => {
+test('always-modal commands open a modal', async () => {
   const { dispatch } = setup();
   const { interaction, calls } = chat('register');
   await dispatch(interaction);
