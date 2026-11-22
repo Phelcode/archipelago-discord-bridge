@@ -43,8 +43,6 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
-  { name: 'join', description: 'Join a multiworld with all your registered worlds (slots)', options: [multiworldOption(true)] },
-  { name: 'leave', description: 'Leave a multiworld', options: [multiworldOption(true)] },
   {
     name: 'release',
     description: '[host] Release a player (like AP !release): sends out all their remaining items',
@@ -266,8 +264,6 @@ export const PERMISSIONS = {
   register: 'all',
   unregister: 'all',
   profile: 'all',
-  join: 'all',
-  leave: 'all',
   release: 'host',
   players: 'all',
   'setup-multiworld': 'host',
@@ -353,8 +349,6 @@ export const COMMAND_SUMMARIES = {
   register: 'Register a world/slot (upload your .yaml in the form); repeat for more; multiworld: auto-joins it',
   unregister: 'Remove one registered world (world: required if you have several); with a single world, removes it',
   profile: 'Your role/registration; set private or public replies',
-  join: 'Join a multiworld with all your registered worlds (slots)',
-  leave: 'Leave a multiworld',
   release: '[host] Release a player (AP !release) — sends out all their remaining items',
   players: 'List registered players (🔒 = blocked), ; multiworld: lists its slots with live status',
   'setup-multiworld': '[host] Create a multiworld (opens a form)',
@@ -548,7 +542,7 @@ const handlers = {
       lines.push(
         '**Hosting a multiworld**',
         '1. `/setup-multiworld` — create the multiworld (form: name, optional password, optional seed)',
-        '2. Players `/register` (one yaml per world/slot) and `/join multiworld: <name>`',
+        '2. Players `/register multiworld: <name>` (one yaml per world/slot)',
         '3. Optional: `/upload-apworld` — add a custom AP world package (.apworld, usable in every multiworld)',
         '4. `/start multiworld: <name>` — generates the multiworld and starts the server',
         '5. `/stop multiworld:` stops it, `/delete-multiworld multiworld:` removes it',
@@ -606,9 +600,15 @@ const handlers = {
     fs.writeFileSync(path.join(playersDir, `${slot}.yaml`), buffer);
     ctx.db.setPlayer(ctx.userId, { slot, game });
     const mySlots = ctx.db.getWorlds(ctx.userId).map((w) => w.slot).join(', ');
-    if (!targetMultiworld) return `Registered world **${slot}** (${game}). Your worlds: ${mySlots}. Use /join multiworld: <name> to enter a multiworld.`;
-    joinMultiworld(ctx, targetMultiworld);
-    return `Registered world **${slot}** (${game}) and joined multiworld **${targetMultiworld.name}** (your worlds there: ${mySlots}).`;
+    let target = targetMultiworld;
+    const active = ctx.db.listMultiworlds().filter((m) => ACTIVE_STATUSES.has(m.status));
+    if (!target && active.length === 1) target = active[0];
+    if (!target) {
+      return `Registered world **${slot}** (${game}). Your worlds: ${mySlots}.`
+        + (active.length > 1 ? ` ${active.length} active multiworlds (${active.map((m) => m.name).join(', ')}) — re-run /register with multiworld: <name> to join one.` : '');
+    }
+    joinMultiworld(ctx, target);
+    return `Registered world **${slot}** (${game}) and joined multiworld **${target.name}** (your worlds there: ${mySlots}).`;
   },
 
   async unregister(ctx) {
@@ -636,7 +636,31 @@ const handlers = {
       if (fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
     } catch { /* ignore */ }
     const remaining = ctx.db.getWorlds(ctx.userId).map((w) => w.slot);
-    return `Removed world **${targets.join(', ')}**.${remaining.length ? ` Remaining worlds: ${remaining.join(', ')}.` : ' You are no longer registered.'}`;
+    const notes = [];
+    // release the removed slots in running multiworlds the user is in
+    for (const mw of ctx.db.listMultiworlds()) {
+      if (mw.status !== 'running' || !(mw.userIds || []).includes(ctx.userId)) continue;
+      for (const slot of targets) {
+        try {
+          await ctx.ap.say(ctx.config, mw, slot, '!release');
+          notes.push(`released **${slot}** in running multiworld **${mw.name}**`);
+        } catch (err) {
+          notes.push(`could not release **${slot}** in **${mw.name}** (${err.message})`);
+        }
+      }
+    }
+    // with no worlds left, leave every multiworld
+    if (!remaining.length) {
+      for (const mw of ctx.db.listMultiworlds()) {
+        if ((mw.userIds || []).includes(ctx.userId)) {
+          mw.userIds = mw.userIds.filter((id) => id !== ctx.userId);
+          ctx.db.setMultiworld(mw.name, mw);
+          notes.push(`left multiworld **${mw.name}**`);
+        }
+      }
+    }
+    const base = `Removed world **${targets.join(', ')}**.${remaining.length ? ` Remaining worlds: ${remaining.join(', ')}.` : ' You are no longer registered.'}`;
+    return notes.length ? `${base} ${notes.join('; ')}.` : base;
   },
 
   async profile(ctx) {
@@ -703,21 +727,6 @@ const handlers = {
       lines.push(`• #${idx} **${s.item}** from **${s.sender}** (found at ${s.location}) — ${s.at}`);
     });
     return lines.join('\n');
-  },
-
-  async join(ctx) {
-    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
-    const player = ctx.db.getPlayer(ctx.userId);
-    if (!player) throw new UserError('You must /register a world (yaml) before joining a multiworld.');
-    joinMultiworld(ctx, mw);
-    return `Joined multiworld **${mw.name}** as slot **${player.slot}**.`;
-  },
-
-  async leave(ctx) {
-    const mw = resolveMultiworld(ctx, ctx.options.multiworld);
-    mw.userIds = (mw.userIds || []).filter((id) => id !== ctx.userId);
-    ctx.db.setMultiworld(mw.name, mw);
-    return `Left multiworld **${mw.name}**.`;
   },
 
   async release(ctx) {

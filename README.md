@@ -14,7 +14,7 @@ Roles are assigned by Discord ID:
 |---|---|---|
 | **Owner** | Discord ID in `.env` (`DISCORD_OWNER_ID`) | Everything, plus `/role` to assign host roles |
 | **Host** | Assigned by the owner via `/role add host @user` | `/setup-multiworld`, `/upload-apworld`, `/start`, `/stop`, `/delete-multiworld` |
-| **Player** | Anyone who runs `/register` with a yaml per world | `/join`/`/leave` multiworlds, `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/multiworld-stats` |
+| **Player** | Anyone who runs `/register` with a yaml per world (joins via `multiworld:`) | `/hints` (if enabled), `/received`, `/block`/`/unblock`, `/stats`, `/multiworld-stats`, `/unregister` |
 | **Spectator** | Everyone (including players and hosts) | `/status`, `/stats`, `/multiworld-stats`, `/players` |
 
 ## How it works
@@ -117,9 +117,9 @@ Roles are assigned by Discord ID:
 
 - `/commands` — every command on its own line with a one-line summary
 - `/glossary` — Archipelago terms used in this app (multiworld, world, slot, seed, room/server, yaml, apworld, check, hint, release, blocked)
-- `/help` — short step-by-step intro for your role: hosts get create/host a multiworld (incl. `/upload-apworld`), players get register (upload a yaml per world) + join, spectators get what they can view
+- `/help` — short step-by-step intro for your role: hosts get create/host a multiworld (incl. `/upload-apworld`), players get register (upload a yaml per world, joins via multiworld:), spectators get what they can view
 - `/register [multiworld:]` — register a world/slot (always opens a modal with a file-upload field for your `.yaml` + optional slot-name field). Repeat to register more worlds (one yaml each); with `multiworld:` you join that multiworld in the same step
-- `/unregister [world:]` (removes one world/yaml; `world:` required if you have several), `/profile [responses:]`, `/join multiworld:`, `/leave multiworld:`, `/players [multiworld:]` (for a running multiworld, also shows each slot's live connection status: offline/connected/ready/playing/goal reached)
+- `/unregister [world:]` — removes one world/yaml (`world:` required if you have several); releases the removed slot(s) in running multiworlds you're in (`!release`), and when no worlds remain, leaves all multiworlds. `/profile [responses:]`, `/players [multiworld:]` (for a running multiworld, also shows each slot's live connection status: offline/connected/ready/playing/goal reached)
 - `/release player: [multiworld:]` — [host] release a slot or user (same as AP `!release`: all remaining items are sent out). `player:` is required (slot name or @user; a user releases all their slots); servers are spawned with `--release_mode enabled`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
 - `/setup-multiworld` — host: create a multiworld (always opens a modal: name + optional password + optional seed, random if empty) and reset player registrations — everyone must `/register` again
@@ -136,7 +136,7 @@ Roles are assigned by Discord ID:
 - `/role add|remove|list` — owner: manage host roles
 
 Typical flow: owner runs `/role add host @someone` → host runs `/setup-multiworld`
-(resets player registrations) → players `/register multiworld: <name>` → host
+(resets player registrations) → players `/register multiworld: <name>` (registers + joins) → host
 `/upload-apworld` (optional) → host `/start` (generates the multiworld if needed,
 then runs the server) → everyone watches `/stats` and `/multiworld-stats`, players check `/hints`.
 

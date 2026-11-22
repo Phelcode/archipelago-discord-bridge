@@ -231,10 +231,10 @@ test('non-command interactions are ignored', async () => {
 
 test('UserError results in a ❌ editReply, unexpected errors in "Something went wrong"', async () => {
   const { dispatch } = setup();
-  const join = chat('join', { options: [{ name: 'multiworld', type: 3, value: 'nope' }] });
-  await dispatch(join.interaction);
-  assert.match(join.calls.editReply[0], /^❌ /);
-  assert.match(join.calls.editReply[0], /Unknown multiworld/);
+  const stats = chat('stats', { options: [{ name: 'multiworld', type: 3, value: 'nope' }] });
+  await dispatch(stats.interaction);
+  assert.match(stats.calls.editReply[0], /^❌ /);
+  assert.match(stats.calls.editReply[0], /Unknown multiworld/);
 
   const boom = modal(MODAL_REGISTER, {
     fieldTypes: { yaml: { type: 19 } },

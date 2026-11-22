@@ -120,7 +120,7 @@ test('handleModal routes the register modal to the register handler', async () =
   assert.equal(ctx.db.getPlayer('user-1').slot, 'Dave');
 });
 
-test('setup-multiworld creates a game and join adds the player', async () => {
+test('setup-multiworld creates a multiworld and /register multiworld: joins the player', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.options = { name: 'My Game', password: 'pw' };
@@ -128,11 +128,16 @@ test('setup-multiworld creates a game and join adds the player', async () => {
   assert.match(out, /my-game/);
   assert.equal(ctx.db.getMultiworld('my-game').password, 'pw');
 
-  const playerCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'user-1' });
-  playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  playerCtx.options = { game: 'my-game' };
-  const joinOut = await handleCommand('join', playerCtx);
-  assert.match(joinOut, /Alice/);
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const playerCtx = makeCtx({
+    db: ctx.db, config: ctx.config, userId: 'user-1',
+    options: { multiworld: 'my-game' },
+    attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  const regOut = await handleCommand('register', playerCtx);
+  assert.match(regOut, /Alice/);
+  assert.match(regOut, /joined multiworld \*\*my-game\*\*/);
   assert.deepEqual(ctx.db.getMultiworld('my-game').userIds, ['user-1']);
 });
 
@@ -156,12 +161,28 @@ test('setup-multiworld resets player registrations and yamls', async () => {
   assert.ok(ctx.db.getMultiworld('new-game'));
 });
 
-test('join requires registration', async () => {
+test('/register auto-joins the single active multiworld; with several active, asks for multiworld:', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const mk = (ctx, options) => makeCtx({
+    db: ctx.db, config: ctx.config,
+    options,
+    attachments: { yaml: { filename: 'a.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
   const ctx = makeCtx();
-  ctx.options = { multiworld: 'x' };
-  await assert.rejects(() => handleCommand('join', ctx), /Unknown multiworld/);
-  ctx.db.setMultiworld('x', { name: 'x', status: 'setup', userIds: [], apworlds: [] });
-  await assert.rejects(() => handleCommand('join', ctx), /register/);
+  ctx.db.setMultiworld('x', { name: 'x', status: 'setup', userIds: [] });
+  // unknown multiworld -> error before registering
+  await assert.rejects(() => handleCommand('register', mk(ctx, { multiworld: 'nope' })), /Unknown multiworld/);
+  // single active multiworld, no option -> auto-joins
+  let out = await handleCommand('register', mk(ctx, {}));
+  assert.match(out, /joined multiworld \*\*x\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('x').userIds, ['user-1']);
+  // two active, no option -> registered but not joined, told to specify
+  ctx.db.setMultiworld('y', { name: 'y', status: 'setup', userIds: [] });
+  const ctx2 = makeCtx({ db: ctx.db, config: ctx.config });
+  out = await handleCommand('register', mk(ctx2, {}));
+  assert.match(out, /multiworld: <name>/);
+  assert.deepEqual(ctx.db.getMultiworld('y').userIds, []);
 });
 
 test('upload-apworld validates zip magic and stores the file globally (not per mw)', async () => {
@@ -772,7 +793,8 @@ test('register with game: auto-joins the session; without it, no join', async ()
 
   const ctx2 = mk({});
   const out2 = await handleCommand('register', ctx2);
-  assert.match(out2, /Use \/join multiworld:/);
+  assert.match(out2, /Registered world \*\*Alice\*\*/);
+  assert.doesNotMatch(out2, /joined/); // no multiworlds exist -> no join
   assert.equal(ctx2.db.listMultiworlds().length, 0);
 
   // unknown game fails before registering
@@ -781,19 +803,22 @@ test('register with game: auto-joins the session; without it, no join', async ()
   assert.ok(!ctx3.db.getPlayer('user-1'));
 });
 
-test('(player, mw) membership is unique; a player can join multiple games', async () => {
+test('(user, multiworld) membership is unique; a user can be in multiple multiworlds via /register', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
   const ctx = makeCtx();
-  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
   ctx.db.setMultiworld('g1', { name: 'g1', status: 'setup', userIds: [] });
   ctx.db.setMultiworld('g2', { name: 'g2', status: 'setup', userIds: [] });
-  ctx.options = { multiworld: 'g1' };
-  await handleCommand('join', ctx);
-  await handleCommand('join', ctx); // again -> still once
+  const mk = (options) => makeCtx({
+    db: ctx.db, config: ctx.config, options,
+    attachments: { yaml: { filename: 'a.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  await handleCommand('register', mk({ multiworld: 'g1' }));
+  await handleCommand('register', mk({ multiworld: 'g1' })); // again -> still once
   assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']);
-  ctx.options = { multiworld: 'g2' };
-  await handleCommand('join', ctx);
+  await handleCommand('register', mk({ multiworld: 'g2' }));
   assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']);
-  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']); // other game untouched
+  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']); // other multiworld untouched
 
   // /players game: shows the count deduped
   ctx.db.getMultiworld('g1').userIds.push('user-1'); // simulate a duplicate entry
@@ -911,11 +936,14 @@ test('a user can register multiple worlds (each with its own yaml) and join mult
   assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml')));
   assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice', 'Alice2']);
 
-  // join both multiworlds: membership is per user, slots fan out per mw
-  ctx.options = { multiworld: 'g1' };
-  await handleCommand('join', ctx);
-  ctx.options = { multiworld: 'g2' };
-  await handleCommand('join', ctx);
+  // register into both multiworlds: membership is per user, slots fan out per mw
+  const mkOpt = (options) => makeCtx({
+    db: ctx.db, config: ctx.config, options,
+    attachments: { yaml: { filename: 'p.yaml', size: yamlA.length, url: 'u' } },
+    download: async () => Buffer.from(yamlA),
+  });
+  await handleCommand('register', mkOpt({ multiworld: 'g1' }));
+  await handleCommand('register', mkOpt({ multiworld: 'g2' }));
   assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']);
   assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']);
   assert.deepEqual(multiworldSlots(ctx.db, ctx.db.getMultiworld('g1')).sort(), ['Alice', 'Alice2']);
@@ -969,4 +997,22 @@ test('/unregister requires world: when you have several worlds; removes just tha
 
   // not registered at all
   await assert.rejects(() => handleCommand('unregister', ctx), /not registered/);
+});
+
+test('/unregister releases removed slots in running multiworlds and leaves when no worlds remain', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('run', { name: 'run', status: 'running', port: 39001, userIds: ['user-1'] });
+  ctx.db.setMultiworld('setup', { name: 'setup', status: 'setup', userIds: ['user-1'] });
+  const said = [];
+  ctx.ap = { ...realAp, say: async (config, mw, slot, text) => { said.push([mw.name, slot, text]); return { ok: true, replies: [] }; } };
+  const out = await handleCommand('unregister', ctx); // single world -> removed, no world: needed
+  assert.match(out, /Removed world \*\*Alice\*\*/);
+  assert.match(out, /released \*\*Alice\*\* in running multiworld \*\*run\*\*/);
+  assert.match(out, /left multiworld \*\*run\*\*/);
+  assert.match(out, /left multiworld \*\*setup\*\*/);
+  assert.deepEqual(said, [['run', 'Alice', '!release']]); // only the running one
+  assert.equal(ctx.db.getPlayer('user-1'), null);
+  assert.deepEqual(ctx.db.getMultiworld('run').userIds, []);
+  assert.deepEqual(ctx.db.getMultiworld('setup').userIds, []);
 });
