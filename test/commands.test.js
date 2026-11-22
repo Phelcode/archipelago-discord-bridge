@@ -883,3 +883,11 @@ test('/players game: shows live connection status for a running game (single ove
   assert.equal(probeCalls, 0);
   assert.doesNotMatch(out2, /playing/);
 });
+
+test('every command has a /commands summary and a PERMISSIONS entry', async () => {
+  const { COMMAND_SUMMARIES } = await import('../src/discord/commands.js');
+  for (const def of COMMAND_DEFINITIONS) {
+    assert.ok(COMMAND_SUMMARIES[def.name], `missing COMMAND_SUMMARIES entry for /${def.name}`);
+    assert.ok(PERMISSIONS[def.name], `missing PERMISSIONS entry for /${def.name}`);
+  }
+});

@@ -340,7 +340,7 @@ export const ALWAYS_MODAL = {
 
 const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing', 30: 'goal reached' };
 
-const COMMAND_SUMMARIES = {
+export const COMMAND_SUMMARIES = {
   commands: 'List all commands with a one-line summary',
   help: 'Step-by-step intro for your role',
   register: 'Register as a player (upload your .yaml in the form); game: auto-joins that session',
@@ -546,13 +546,14 @@ const handlers = {
         '3. Optional: `/upload-apworld` — add a custom game (.apworld, usable in every game)',
         '4. `/start game: <name>` — generates the multiworld and starts the server',
         '5. `/stop game:` stops it, `/delete-game game:` removes it',
+        '6. `/release game: <name> player: <slot or @user>` — release a player who can\'t continue (sends out their remaining items)',
       );
     } else if (ctx.db.getPlayer(ctx.userId)) {
       lines.push(
         '**Playing**',
         '1. `/register game: <name>` — upload your yaml and join in one step (or `/register`, then `/join game: <name>`)',
         '2. `/stats`, `/game-stats` — watch progress; `/hints`, `/received` — your hints and items',
-        '3. Hosts can `/release game: <name> player: <slot or @user>` to send out a player\'s remaining items',
+        '3. `/block` — get a DM when someone sends you an item; `/unblock` to stop',
       );
     } else {
       lines.push(
