@@ -116,6 +116,7 @@ Roles are assigned by Discord ID:
 ## Commands
 
 - `/commands` — every command on its own line with a one-line summary
+- `/glossary` — Archipelago terms used in this app (multiworld, world, slot, seed, room/server, yaml, apworld, check, hint, release, blocked)
 - `/help` — short step-by-step intro for your role: hosts get create/host a multiworld (incl. `/upload-apworld`), players get register (upload a yaml per world) + join, spectators get what they can view
 - `/register [multiworld:]` — register a world/slot (always opens a modal with a file-upload field for your `.yaml` + optional slot-name field). Repeat to register more worlds (one yaml each); with `multiworld:` you join that multiworld in the same step
 - `/unregister`, `/profile [responses:]`, `/join multiworld:`, `/leave multiworld:`, `/players [multiworld:]` (for a running multiworld, also shows each slot's live connection status: offline/connected/ready/playing/goal reached)

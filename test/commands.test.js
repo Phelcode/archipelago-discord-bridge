@@ -926,3 +926,12 @@ test('a user can register multiple worlds (each with its own yaml) and join mult
   assert.match(out, /joined multiworld \*\*g2\*\*/);
   assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']); // still unique
 });
+
+test('/glossary documents the terms used in the app', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('glossary', ctx);
+  for (const term of ['Multiworld', 'World', 'Slot', 'Seed', 'yaml', 'apworld', 'Check', 'Hint', 'Release', 'room']) {
+    assert.ok(out.includes(term), `glossary mentions ${term}`);
+  }
+  assert.match(out, /multiworld:/); // the command option name
+});

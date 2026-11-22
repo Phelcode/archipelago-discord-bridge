@@ -20,6 +20,7 @@ const multiworldOption = (required) => ({
 export const COMMAND_DEFINITIONS = [
   { name: 'commands', description: 'List all commands with a one-line summary' },
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
+  { name: 'glossary', description: 'Archipelago terms used in this app (multiworld, world, slot, seed, …)' },
   { name: 'register', description: 'Register a world/slot (modal form for your .yaml); repeat for more worlds; multiworld: also joins it', options: [multiworldOption(false)] },
   { name: 'unregister', description: 'Remove all your registered worlds and yamls' },
   {
@@ -257,6 +258,7 @@ export function scheduleCommandRegistration(client, config, opts, { intervalMs =
 export const PERMISSIONS = {
   commands: 'all',
   help: 'all',
+  glossary: 'all',
   register: 'all',
   unregister: 'all',
   profile: 'all',
@@ -343,6 +345,7 @@ const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing',
 export const COMMAND_SUMMARIES = {
   commands: 'List all commands with a one-line summary',
   help: 'Step-by-step intro for your role',
+  glossary: 'Archipelago terms used here (multiworld, world, slot, seed, room, yaml, apworld, check, hint, release)',
   register: 'Register a world/slot (upload your .yaml in the form); repeat for more; multiworld: auto-joins it',
   unregister: 'Remove all your registered worlds and yamls',
   profile: 'Your role/registration; set private or public replies',
@@ -562,6 +565,27 @@ const handlers = {
     }
     lines.push('', '`/commands` lists everything; `/profile` sets private vs public replies.');
     return lines.join('\n');
+  },
+
+  async glossary(ctx) {
+    return [
+      '**Archipelago glossary** (terms as used in this app — see https://archipelago.gg/glossary/en/)',
+      '',
+      '• **Multiworld** — one generated seed: all slots together with their items, locations and access rules. In this app a multiworld is what `/setup-multiworld` creates and `/start` hosts (option `multiworld:`).',
+      '• **Server / room** — a running instance of a multiworld. `/start` spawns one per multiworld; you connect to it at `host:port`.',
+      '• **World** — one player\'s randomized copy of a game. You bring one per slot via a yaml: `/register` (repeat to add more worlds).',
+      '• **Slot** — a single world within a multiworld, identified by its **slot name** (the `name:` in your yaml). Items and checks belong to slots.',
+      '• **Seed** — the random seed of a multiworld (unique item placement). Set in `/setup-multiworld` or random.',
+      '• **Yaml** — a player config file; one yaml creates one world/slot. Upload via `/register`.',
+      '• **APWorld (.apworld)** — a custom game package; upload via `/upload-apworld`, usable in every multiworld.',
+      '• **Item** — something shuffled between worlds; sent when a **check** is done.',
+      '• **Check / location** — a place to look; checking it sends the item found there to its owner. `/stats` shows found/total per slot.',
+      '• **Hint** — a pointer to where an item is (see `/hints`; costs hint points).',
+      '• **Release** — send out all remaining items of a slot (`/release`, like AP `!release`).',
+      '• **Blocked** — `/block` makes the bridge DM you when someone sends you an item.',
+      '',
+      'Roles in this app: **owner** (`DISCORD_OWNER_ID`), **host** (`/role add host @user`), **player** (registered), **spectator** (everyone).',
+    ].join('\n');
   },
 
   async register(ctx) {
