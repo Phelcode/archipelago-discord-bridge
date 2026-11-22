@@ -70,7 +70,7 @@ test('help walks each role through their own steps', async () => {
   playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
   const player = await handleCommand('help', playerCtx);
   assert.match(player, /role: player/);
-  assert.match(player, /\/join multiworld:/);
+  assert.match(player, /\/register/);
   assert.match(player, /\/hints/);
 
   const spectator = await handleCommand('help', makeCtx({ userId: 'nobody' }));
