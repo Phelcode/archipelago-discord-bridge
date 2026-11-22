@@ -5,13 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store.js';
 import { createDispatcher, chunkContent } from '../src/discord/dispatch.js';
-import { MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME } from '../src/discord/commands.js';
+import { MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_MULTIWORLD } from '../src/discord/commands.js';
 
 function makeConfig(overrides = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-disp-'));
   return {
     discordOwnerId: 'owner-1',
-    discordGuildId: null,
+    discordGuildIds: [],
     dataDir,
     basePort: 39000,
     publicHost: 'ap.example.com',
@@ -83,14 +83,13 @@ test('chunkContent splits long messages on newlines under the limit', () => {
   assert.deepEqual(chunkContent('short'), ['short']);
 });
 
-test('interactions from a foreign guild are rejected when DISCORD_GUILD_ID is set', async () => {
-  const { dispatch } = setup({ config: { discordGuildId: 'guild-1' } });
-  const { interaction, calls } = chat('help', { guildId: 'other-guild' });
+test('DM interactions (no guild) are accepted even when DISCORD_GUILD_ID is configured', async () => {
+  const { dispatch } = setup({ config: { discordGuildIds: ['guild-1'] } });
+  const { interaction, calls } = chat('commands', { guildId: null });
   await dispatch(interaction);
-  assert.equal(calls.reply.length, 1);
-  assert.equal(calls.reply[0].flags, 64); // MessageFlags.Ephemeral
-  assert.match(calls.reply[0].content, /restricted to a specific server/);
-  assert.equal(calls.deferReply.length, 0);
+  assert.equal(calls.reply.length, 0);
+  assert.deepEqual(calls.deferReply, [{}]);
+  assert.match(calls.editReply[0], /\*\*Commands\*\*/);
 });
 
 test('owner-only commands are denied for non-owners', async () => {
@@ -104,23 +103,23 @@ test('owner-only commands are denied for non-owners', async () => {
 
 test('host-only commands are denied for non-hosts (no modal shown)', async () => {
   const { dispatch } = setup();
-  const { interaction, calls } = chat('setup-game');
+  const { interaction, calls } = chat('setup-multiworld');
   await dispatch(interaction);
   assert.equal(calls.reply.length, 1);
   assert.match(calls.reply[0].content, /Only hosts/);
   assert.equal(calls.showModal.length, 0);
 });
 
-test('delete-game is host-only', async () => {
+test('delete-multiworld is host-only', async () => {
   const { dispatch } = setup();
-  const { interaction, calls } = chat('delete-game', { options: [{ name: 'game', type: 3, value: 'g' }] });
+  const { interaction, calls } = chat('delete-multiworld', { options: [{ name: 'multiworld', type: 3, value: 'g' }] });
   await dispatch(interaction);
   assert.equal(calls.reply.length, 1);
   assert.match(calls.reply[0].content, /Only hosts/);
   assert.equal(calls.deferReply.length, 0);
 });
 
-test('always-modal commands open a modal instead of replying', async () => {
+test('always-modal commands open a modal', async () => {
   const { dispatch } = setup();
   const { interaction, calls } = chat('register');
   await dispatch(interaction);
@@ -171,22 +170,22 @@ test('register modal submit downloads the uploaded yaml and registers the player
   });
   await dispatch(interaction);
   assert.deepEqual(calls.deferReply, [{ flags: 64 }]); // register is always ephemeral
-  assert.match(calls.editReply[0], /Registered as player \*\*Dave\*\*/);
+  assert.match(calls.editReply[0], /Registered world \*\*Dave\*\*/);
   assert.equal(db.getPlayer('user-1').slot, 'Dave');
 });
 
-test('setup-game modal submit creates the game for a host', async () => {
+test('setup-multiworld modal submit creates the game for a host', async () => {
   const { db, dispatch } = setup();
   db.addHost('host-1');
-  const { interaction, calls } = modal(MODAL_SETUP_GAME, {
+  const { interaction, calls } = modal(MODAL_SETUP_MULTIWORLD, {
     userId: 'host-1',
     fieldTypes: { name: { type: 4 }, password: { type: 4 } },
     textValues: { name: 'My Game', password: 'pw' },
   });
   await dispatch(interaction);
   assert.deepEqual(calls.deferReply, [{}]);
-  assert.match(calls.editReply[0], /Created game \*\*my-game\*\*/);
-  assert.equal(db.getGame('my-game').password, 'pw');
+  assert.match(calls.editReply[0], /Created multiworld \*\*my-game\*\*/);
+  assert.equal(db.getMultiworld('my-game').password, 'pw');
 });
 
 test('host modals are denied for non-hosts', async () => {
@@ -210,7 +209,7 @@ test('upload-apworld modal submit stores the file globally (no game field)', asy
   await dispatch(interaction);
   assert.deepEqual(calls.deferReply, [{}]);
   assert.match(calls.editReply[0], /Uploaded \*\*cool\.apworld\*\*/);
-  assert.match(calls.editReply[0], /every game/);
+  assert.match(calls.editReply[0], /every multiworld/);
   assert.ok(fs.existsSync(path.join(config.dataDir, 'apworlds', 'cool.apworld')));
   assert.equal(fs.existsSync(path.join(config.dataDir, 'games')), false);
 });
@@ -232,10 +231,10 @@ test('non-command interactions are ignored', async () => {
 
 test('UserError results in a ❌ editReply, unexpected errors in "Something went wrong"', async () => {
   const { dispatch } = setup();
-  const join = chat('join', { options: [{ name: 'game', type: 3, value: 'nope' }] });
-  await dispatch(join.interaction);
-  assert.match(join.calls.editReply[0], /^❌ /);
-  assert.match(join.calls.editReply[0], /Unknown game/);
+  const stats = chat('stats', { options: [{ name: 'multiworld', type: 3, value: 'nope' }] });
+  await dispatch(stats.interaction);
+  assert.match(stats.calls.editReply[0], /^❌ /);
+  assert.match(stats.calls.editReply[0], /Unknown multiworld/);
 
   const boom = modal(MODAL_REGISTER, {
     fieldTypes: { yaml: { type: 19 } },

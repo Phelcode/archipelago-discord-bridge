@@ -7,9 +7,8 @@ import { Store } from '../src/store.js';
 import {
   handleCommand, handleModal, UserError,
   globalCommandPayload, guildCommandPayload, registerAllCommands,
-  registerModal, uploadApworldModal, setupGameModal,
-  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_GAME,
-} from '../src/discord/commands.js';
+  registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, payloadHash,
+  ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_MULTIWORLD, PERMISSIONS, multiworldSlots } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
 
 function makeConfig() {
@@ -49,21 +48,21 @@ test('commands lists every command on its own line with a summary', async () => 
   for (const def of COMMAND_DEFINITIONS) {
     assert.ok(out.includes(`• \`/${def.name}\` — `), `missing line for /${def.name}`);
   }
-  assert.match(out, /\/setup-game` — \[host\]/);
+  assert.match(out, /\/setup-multiworld` — \[host\]/);
 });
 
 test('help walks each role through their own steps', async () => {
   const owner = await handleCommand('help', makeCtx({ userId: 'owner-1' }));
   assert.match(owner, /role: owner/);
   assert.match(owner, /\/role add host/);
-  assert.match(owner, /\/setup-game/);
-  assert.match(owner, /\/start game:/);
+  assert.match(owner, /\/setup-multiworld/);
+  assert.match(owner, /\/start multiworld:/);
 
   const hostCtx = makeCtx({ userId: 'host-1' });
   hostCtx.db.addHost('host-1');
   const host = await handleCommand('help', hostCtx);
   assert.match(host, /role: host/);
-  assert.match(host, /Hosting a game/);
+  assert.match(host, /Hosting a multiworld/);
   assert.match(host, /\/upload-apworld/);
   assert.doesNotMatch(host, /\/role add/);
 
@@ -71,7 +70,7 @@ test('help walks each role through their own steps', async () => {
   playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
   const player = await handleCommand('help', playerCtx);
   assert.match(player, /role: player/);
-  assert.match(player, /\/join game:/);
+  assert.match(player, /\/register/);
   assert.match(player, /\/hints/);
 
   const spectator = await handleCommand('help', makeCtx({ userId: 'nobody' }));
@@ -91,7 +90,7 @@ test('register validates and stores the player yaml', async () => {
   assert.match(out, /Alice/);
   assert.match(out, /ChecksFinder/);
   assert.equal(ctx.db.getPlayer('user-1').slot, 'Alice');
-  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
 });
 
 test('register rejects bad yaml', async () => {
@@ -121,58 +120,79 @@ test('handleModal routes the register modal to the register handler', async () =
   assert.equal(ctx.db.getPlayer('user-1').slot, 'Dave');
 });
 
-test('setup-game creates a game and join adds the player', async () => {
+test('setup-multiworld creates a multiworld and /register multiworld: joins the player', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.options = { name: 'My Game', password: 'pw' };
-  const out = await handleCommand('setup-game', ctx);
+  const out = await handleCommand('setup-multiworld', ctx);
   assert.match(out, /my-game/);
-  assert.equal(ctx.db.getGame('my-game').password, 'pw');
+  assert.equal(ctx.db.getMultiworld('my-game').password, 'pw');
 
-  const playerCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'user-1' });
-  playerCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  playerCtx.options = { game: 'my-game' };
-  const joinOut = await handleCommand('join', playerCtx);
-  assert.match(joinOut, /Alice/);
-  assert.deepEqual(ctx.db.getGame('my-game').playerIds, ['user-1']);
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const playerCtx = makeCtx({
+    db: ctx.db, config: ctx.config, userId: 'user-1',
+    options: { multiworld: 'my-game' },
+    attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  const regOut = await handleCommand('register', playerCtx);
+  assert.match(regOut, /Alice/);
+  assert.match(regOut, /joined multiworld \*\*my-game\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('my-game').userIds, ['user-1']);
 });
 
-test('setup-game discards previous players and yamls', async () => {
+test('setup-multiworld resets player registrations and yamls', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  ctx.db.setGame('old', { name: 'old', status: 'stopped', playerIds: ['user-1'], apworlds: [] });
+  ctx.db.setMultiworld('old', { name: 'old', status: 'stopped', userIds: ['user-1'], apworlds: [] });
   const playersDir = path.join(ctx.config.dataDir, 'players');
   fs.mkdirSync(playersDir, { recursive: true });
   fs.writeFileSync(path.join(playersDir, 'user-1.yaml'), 'name: Alice\n');
 
   ctx.options = { name: 'new-game' };
-  const out = await handleCommand('setup-game', ctx);
+  const out = await handleCommand('setup-multiworld', ctx);
   assert.match(out, /new-game/);
-  assert.match(out, /discarded/);
+  assert.match(out, /reset/);
   assert.equal(ctx.db.getPlayer('user-1'), null);
   assert.deepEqual(ctx.db.data.players, {});
-  assert.deepEqual(ctx.db.getGame('old').playerIds, []);
+  assert.deepEqual(ctx.db.getMultiworld('old').userIds, []);
   assert.equal(fs.existsSync(playersDir), false);
-  assert.ok(ctx.db.getGame('new-game'));
+  assert.ok(ctx.db.getMultiworld('new-game'));
 });
 
-test('join requires registration', async () => {
+test('/register auto-joins the single active multiworld; with several active, asks for multiworld:', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const mk = (ctx, options) => makeCtx({
+    db: ctx.db, config: ctx.config,
+    options,
+    attachments: { yaml: { filename: 'a.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
   const ctx = makeCtx();
-  ctx.options = { game: 'x' };
-  await assert.rejects(() => handleCommand('join', ctx), /Unknown game/);
-  ctx.db.setGame('x', { name: 'x', status: 'setup', playerIds: [], apworlds: [] });
-  await assert.rejects(() => handleCommand('join', ctx), /register/);
+  ctx.db.setMultiworld('x', { name: 'x', status: 'setup', userIds: [] });
+  // unknown multiworld -> error before registering
+  await assert.rejects(() => handleCommand('register', mk(ctx, { multiworld: 'nope' })), /Unknown multiworld/);
+  // single active multiworld, no option -> auto-joins
+  let out = await handleCommand('register', mk(ctx, {}));
+  assert.match(out, /joined multiworld \*\*x\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('x').userIds, ['user-1']);
+  // two active, no option -> registered but not joined, told to specify
+  ctx.db.setMultiworld('y', { name: 'y', status: 'setup', userIds: [] });
+  const ctx2 = makeCtx({ db: ctx.db, config: ctx.config });
+  out = await handleCommand('register', mk(ctx2, {}));
+  assert.match(out, /multiworld: <name>/);
+  assert.deepEqual(ctx.db.getMultiworld('y').userIds, []);
 });
 
-test('upload-apworld validates zip magic and stores the file globally (not per game)', async () => {
+test('upload-apworld validates zip magic and stores the file globally (not per mw)', async () => {
   const ctx = makeCtx();
   const zipBuf = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(100)]);
   ctx.attachments = { file: { filename: 'cool.apworld', size: zipBuf.length, url: 'u' } };
   ctx.download = async () => zipBuf;
   const out = await handleCommand('upload-apworld', ctx);
   assert.match(out, /cool\.apworld/);
-  assert.match(out, /every game/);
+  assert.match(out, /every multiworld/);
   assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'apworlds', 'cool.apworld')));
   assert.equal(fs.existsSync(path.join(ctx.config.dataDir, 'games')), false);
 
@@ -184,7 +204,7 @@ test('upload-apworld validates zip magic and stores the file globally (not per g
 test('stats renders probe output per player', async () => {
   const ctx = makeCtx();
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'], apworlds: [] });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1'], apworlds: [] });
   ctx.ap = {
     ...realAp,
     async probe() {
@@ -195,7 +215,7 @@ test('stats renders probe output per player', async () => {
       };
     },
   };
-  ctx.options = { game: 'g' };
+  ctx.options = { multiworld: 'g' };
   const out = await handleCommand('stats', ctx);
   assert.match(out, /Alice/);
   assert.match(out, /2\/25 checks \(8%\)/);
@@ -203,11 +223,11 @@ test('stats renders probe output per player', async () => {
   assert.match(out, /ap\.example\.com:39001/);
 });
 
-test('game-stats aggregates gamewide numbers', async () => {
+test('multiworld-stats aggregates gamewide numbers', async () => {
   const ctx = makeCtx();
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
   ctx.db.setPlayer('user-2', { slot: 'Bob', game: 'ChecksFinder' });
-  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1', 'user-2'], apworlds: [] });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1', 'user-2'], apworlds: [] });
   ctx.ap = {
     ...realAp,
     async probe() {
@@ -221,7 +241,7 @@ test('game-stats aggregates gamewide numbers', async () => {
       };
     },
   };
-  const out = await handleCommand('game-stats', ctx);
+  const out = await handleCommand('multiworld-stats', ctx);
   assert.match(out, /3\/50\*\* \(6%\)/);
   assert.match(out, /completed \(goal\): 1/);
   assert.match(out, /Hints: 1 created, 0 found/);
@@ -230,7 +250,7 @@ test('game-stats aggregates gamewide numbers', async () => {
 test('hints shows only the player hints and respects HINTS_ENABLED', async () => {
   const ctx = makeCtx();
   ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'], apworlds: [] });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1'], apworlds: [] });
   ctx.ap = {
     ...realAp,
     async probe() {
@@ -251,26 +271,26 @@ test('hints shows only the player hints and respects HINTS_ENABLED', async () =>
 
 test('stats on a non-running game fails with a clear message', async () => {
   const ctx = makeCtx();
-  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], apworlds: [] });
-  ctx.options = { game: 'g' };
+  ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: [], apworlds: [] });
+  ctx.options = { multiworld: 'g' };
   await assert.rejects(() => handleCommand('stats', ctx), /not running/);
 });
 
 test('status lists active games by default, finished via scope, everything via all', async () => {
   const ctx = makeCtx();
-  ctx.db.setGame('live', { name: 'live', status: 'running', port: 39001, playerIds: [] });
-  ctx.db.setGame('ready', { name: 'ready', status: 'generated', playerIds: [] });
-  ctx.db.setGame('old', { name: 'old', status: 'stopped', playerIds: [] });
+  ctx.db.setMultiworld('live', { name: 'live', status: 'running', port: 39001, userIds: [] });
+  ctx.db.setMultiworld('ready', { name: 'ready', status: 'generated', userIds: [] });
+  ctx.db.setMultiworld('old', { name: 'old', status: 'stopped', userIds: [] });
 
   let out = await handleCommand('status', ctx);
-  assert.match(out, /Active games/);
+  assert.match(out, /Active multiworlds/);
   assert.match(out, /\*\*live\*\*/);
   assert.match(out, /\*\*ready\*\*/);
   assert.doesNotMatch(out, /\*\*old\*\*/);
 
   ctx.options = { scope: 'finished' };
   out = await handleCommand('status', ctx);
-  assert.match(out, /Finished games/);
+  assert.match(out, /Finished multiworlds/);
   assert.match(out, /\*\*old\*\*/);
   assert.doesNotMatch(out, /\*\*live\*\*/);
 
@@ -279,7 +299,7 @@ test('status lists active games by default, finished via scope, everything via a
   assert.match(out, /\*\*live\*\*/);
   assert.match(out, /\*\*old\*\*/);
 
-  ctx.options = { game: 'old' };
+  ctx.options = { multiworld: 'old' };
   out = await handleCommand('status', ctx);
   assert.match(out, /\*\*old\*\*/);
   assert.doesNotMatch(out, /\*\*live\*\*/);
@@ -288,43 +308,113 @@ test('status lists active games by default, finished via scope, everything via a
 test('status with no games explains how to create one', async () => {
   const ctx = makeCtx();
   const out = await handleCommand('status', ctx);
-  assert.match(out, /No games yet/);
-  assert.match(out, /\/setup-game/);
+  assert.match(out, /No multiworlds yet/);
+  assert.match(out, /\/setup-multiworld/);
 });
 
-test('delete-game stops a running server, removes the db entry and files', async () => {
+test('delete-multiworld stops a running server, removes the db entry and files', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
-  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: [], pid: 12345 });
-  const dir = realAp.gameDir(ctx.config, { name: 'g' });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: [], pid: 12345 });
+  const dir = realAp.multiworldDir(ctx.config, { name: 'g' });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'server.log'), 'log');
   let stopped = false;
-  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; }, isServerProcessAlive: () => true };
-  ctx.options = { game: 'g' };
-  const out = await handleCommand('delete-game', ctx);
-  assert.match(out, /Deleted game \*\*g\*\*/);
+  ctx.ap = { ...realAp, stopMultiworld: () => { stopped = true; return true; }, isServerProcessAlive: () => true };
+  ctx.options = { multiworld: 'g' };
+  const out = await handleCommand('delete-multiworld', ctx);
+  assert.match(out, /Deleted multiworld \*\*g\*\*/);
   assert.equal(stopped, true);
-  assert.equal(ctx.db.getGame('g'), null);
+  assert.equal(ctx.db.getMultiworld('g'), null);
   assert.equal(fs.existsSync(dir), false);
 });
 
-test('delete-game does not touch a stopped game server but still removes it', async () => {
+test('delete-multiworld does not touch a stopped game server but still removes it', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
-  ctx.db.setGame('g', { name: 'g', status: 'stopped', playerIds: [] });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'stopped', userIds: [] });
   let stopped = false;
-  ctx.ap = { ...realAp, stopGame: () => { stopped = true; return true; } };
-  ctx.options = { game: 'g' };
-  const out = await handleCommand('delete-game', ctx);
-  assert.match(out, /Deleted game/);
+  ctx.ap = { ...realAp, stopMultiworld: () => { stopped = true; return true; } };
+  ctx.options = { multiworld: 'g' };
+  const out = await handleCommand('delete-multiworld', ctx);
+  assert.match(out, /Deleted multiworld/);
   assert.equal(stopped, false);
-  assert.equal(ctx.db.getGame('g'), null);
+  assert.equal(ctx.db.getMultiworld('g'), null);
 });
 
-test('delete-game on an unknown game fails clearly', async () => {
+test('delete-multiworld on an unknown game fails clearly', async () => {
   const ctx = makeCtx();
-  ctx.options = { game: 'nope' };
-  await assert.rejects(() => handleCommand('delete-game', ctx), /Unknown game/);
+  ctx.options = { multiworld: 'nope' };
+  await assert.rejects(() => handleCommand('delete-multiworld', ctx), /Unknown multiworld/);
+});
+
+test('received reads item sends from the server log (what/who/when); new by default, all with scope: all', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1'] });
+  const logDir = realAp.multiworldDir(ctx.config, ctx.db.getMultiworld('g'));
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(path.join(logDir, 'server.log'), [
+    '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Bob sent Map Bombs to Alice (Tile 3)',
+    '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 4)',
+    '[MultiServer at 2026-01-02 03:05:01,000]: (Team #1) Alice sent Map Bombs to Bob (Tile 9)',
+    '',
+  ].join('\n'));
+  ctx.options = { multiworld: 'g' };
+  let out = await handleCommand('received', ctx);
+  assert.match(out, /Map Bombs/);
+  assert.match(out, /Progressive Sword/);
+  assert.match(out, /from \*\*Bob\*\*/); // by who
+  assert.match(out, /2026-01-02 03:04:05,678/); // when, from the log timestamp
+  assert.doesNotMatch(out, /Tile 9/); // items sent BY Alice are not hers
+  assert.equal(ctx.db.getPreference('user-1').lastReceivedIndex.g, 2);
+
+  out = await handleCommand('received', ctx); // nothing new since last check
+  assert.match(out, /Nothing new/);
+
+  ctx.options = { multiworld: 'g', scope: 'all' };
+  out = await handleCommand('received', ctx);
+  assert.match(out, /full list \(2\)/);
+  assert.match(out, /Map Bombs/);
+
+  // requires registration
+  await assert.rejects(
+    () => handleCommand('received', makeCtx({ userId: 'user-2', db: ctx.db, config: ctx.config, options: { multiworld: 'g' } })),
+    /register/,
+  );
+  // requires a running game
+  ctx.db.getMultiworld('g').status = 'stopped';
+  ctx.db.setMultiworld('g', ctx.db.getMultiworld('g'));
+  await assert.rejects(() => handleCommand('received', ctx), /not running/);
+});
+
+test('block/unblock toggle the blocked preference and profile shows it', async () => {
+  const ctx = makeCtx();
+  let out = await handleCommand('profile', ctx);
+  assert.match(out, /Blocked \(DM when someone sends you an item\): \*\*no \(default\)\*\*/);
+  out = await handleCommand('block', ctx);
+  assert.match(out, /blocked/);
+  assert.equal(ctx.db.getPreference('user-1').blocked, true);
+  out = await handleCommand('profile', ctx);
+  assert.match(out, /Blocked.*\*\*yes\*\*/);
+  out = await handleCommand('unblock', ctx);
+  assert.match(out, /unblocked/);
+  assert.equal(ctx.db.getPreference('user-1').blocked, false);
+});
+
+test('players shows the blocked marker for blocked users', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('u1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setPlayer('u2', { slot: 'Bob', game: 'ChecksFinder' });
+  ctx.db.setPreference('u2', 'blocked', true);
+  let out = await handleCommand('players', ctx);
+  assert.match(out, /<@u1> — \*\*Alice\*\* \(ChecksFinder\)\n/);
+  assert.match(out, /<@u2> — \*\*Bob\*\* \(ChecksFinder\) 🔒 blocked/);
+
+  ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: ['u1', 'u2'] });
+  ctx.options = { multiworld: 'g' };
+  out = await handleCommand('players', ctx);
+  assert.match(out, /<@u1> — slot \*\*Alice\*\* \(ChecksFinder\)\n/);
+  assert.match(out, /<@u2> — slot \*\*Bob\*\* \(ChecksFinder\) 🔒 blocked/);
 });
 
 test('role add/remove/list manage hosts', async () => {
@@ -371,13 +461,16 @@ test('form commands take no inline options and always open a modal', () => {
   const expectedModal = {
     register: MODAL_REGISTER,
     'upload-apworld': MODAL_UPLOAD_APWORLD,
-    'setup-game': MODAL_SETUP_GAME,
+    'setup-multiworld': MODAL_SETUP_MULTIWORLD,
   };
   for (const [name, customId] of Object.entries(expectedModal)) {
     assert.ok(ALWAYS_MODAL[name], `${name} is always-modal`);
-    assert.deepEqual(byName[name].options, [], `${name} has no inline options`);
+    // form commands take no required inline options (register's optional game: is the exception)
+    const inlineOpts = (byName[name].options || []).filter((o) => o.required);
+    assert.deepEqual(inlineOpts, [], `${name} has no required inline options`);
     assert.equal(ALWAYS_MODAL[name]().toJSON().custom_id, customId);
   }
+  assert.deepEqual(byName.register.options.map((o) => o.name), ['multiworld']);
   // required options must precede optional ones (Discord validation rule)
   for (const def of COMMAND_DEFINITIONS) {
     const opts = def.options || [];
@@ -402,7 +495,7 @@ test('modal builders produce file-upload (type 19) and text (type 4) components 
   assert.ok(up.components.every((c) => c.component.type === 19), 'apworld upload has no game field — apworlds are global');
 
   const setup = setupGameModal().toJSON();
-  assert.equal(setup.custom_id, 'bridge_setup_game');
+  assert.equal(setup.custom_id, 'bridge_setup_multiworld');
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'name'));
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'password'));
   assert.ok(setup.components.some((c) => c.component.type === 4 && c.component.custom_id === 'seed'));
@@ -438,29 +531,29 @@ test('profile shows role/registration and sets the private-responses preference'
   await assert.rejects(() => handleCommand('profile', ctx), /private.*public/);
 });
 
-test('setup-game modal stores name/password/seed; /start generates then runs', async () => {
+test('setup-multiworld modal stores name/password/seed; /start generates then runs', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.modal = { fields: { name: 'Modal Game', password: 'pw', seed: '424242' }, files: {} };
-  const out = await handleCommand('setup-game', ctx);
+  const out = await handleCommand('setup-multiworld', ctx);
   assert.match(out, /modal-game/);
   assert.match(out, /\/start/);
-  assert.equal(ctx.db.getGame('modal-game').password, 'pw');
-  assert.equal(ctx.db.getGame('modal-game').requestedSeed, '424242');
+  assert.equal(ctx.db.getMultiworld('modal-game').password, 'pw');
+  assert.equal(ctx.db.getMultiworld('modal-game').requestedSeed, '424242');
 
   const startCtx = makeCtx({ db: ctx.db, config: ctx.config, userId: 'host-1' });
   startCtx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
-  const g = startCtx.db.getGame('modal-game');
-  g.playerIds = ['user-1'];
-  startCtx.db.setGame('modal-game', g);
+  const g = startCtx.db.getMultiworld('modal-game');
+  g.userIds = ['user-1'];
+  startCtx.db.setMultiworld('modal-game', g);
   let generatedWith;
   startCtx.ap = {
     ...realAp,
-    async generateGame(c, d, game, seed) {
+    async generateMultiworld(c, d, mw, seed) {
       generatedWith = seed;
       return { multidata: path.join(ctx.config.dataDir, 'x.zip'), spoiler: '/tmp/s.txt', seed: '1', seedNumber: Number(seed), players: ['Alice'], log: '' };
     },
-    startGame: () => ({ pid: 123, logFile: '/tmp/log' }),
+    startMultiworld: () => ({ pid: 123, logFile: '/tmp/log' }),
     waitForPort: async () => true,
     isServerProcessAlive: () => true,
   };
@@ -469,33 +562,33 @@ test('setup-game modal stores name/password/seed; /start generates then runs', a
   assert.equal(generatedWith, 424242);
   assert.match(startOut, /Generated multiworld/);
   assert.match(startOut, /running/);
-  assert.equal(startCtx.db.getGame('modal-game').status, 'running');
-  assert.equal(startCtx.db.getGame('modal-game').seedNumber, 424242);
+  assert.equal(startCtx.db.getMultiworld('modal-game').status, 'running');
+  assert.equal(startCtx.db.getMultiworld('modal-game').seedNumber, 424242);
 
   await assert.rejects(() => handleCommand('start', startCtx), /already running/);
 });
 
-test('setup-game rejects a non-integer seed in the form', async () => {
+test('setup-multiworld rejects a non-integer seed in the form', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   ctx.modal = { fields: { name: 'g', password: '', seed: 'abc' }, files: {} };
-  await assert.rejects(() => handleCommand('setup-game', ctx), /integer/);
+  await assert.rejects(() => handleCommand('setup-multiworld', ctx), /integer/);
 });
 
-test('start reuses an existing generation instead of regenerating', async () => {
+test('start reuses an existing generation', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
   const zip = path.join(ctx.config.dataDir, 'x.zip');
   fs.writeFileSync(zip, 'PK');
-  ctx.db.setGame('g', { name: 'g', status: 'generated', multidata: zip, seed: '1', seedNumber: 5, playerIds: [] });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'generated', multidata: zip, seed: '1', seedNumber: 5, userIds: [] });
   let genCalled = false;
   ctx.ap = {
     ...realAp,
-    generateGame: async () => { genCalled = true; throw new Error('should not be called'); },
-    startGame: () => ({ pid: 1, logFile: '/tmp/l' }),
+    generateMultiworld: async () => { genCalled = true; throw new Error('should not be called'); },
+    startMultiworld: () => ({ pid: 1, logFile: '/tmp/l' }),
     waitForPort: async () => true,
     isServerProcessAlive: () => true,
   };
-  ctx.options = { game: 'g' };
+  ctx.options = { multiworld: 'g' };
   const out = await handleCommand('start', ctx);
   assert.equal(genCalled, false);
   assert.match(out, /running/);
@@ -504,57 +597,422 @@ test('start reuses an existing generation instead of regenerating', async () => 
 
 test('start with a bad stored seed fails clearly and stays in setup', async () => {
   const ctx = makeCtx({ userId: 'host-1' });
-  ctx.db.setGame('g', { name: 'g', status: 'setup', playerIds: [], requestedSeed: 'abc' });
-  ctx.options = { game: 'g' };
+  ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: [], requestedSeed: 'abc' });
+  ctx.options = { multiworld: 'g' };
   await assert.rejects(() => handleCommand('start', ctx), /integer/);
-  assert.equal(ctx.db.getGame('g').status, 'setup');
+  assert.equal(ctx.db.getMultiworld('g').status, 'setup');
 });
 
-function mockClient({ failGuild = false, failAppEdit = false } = {}) {
+
+
+function mockClient({ failGuild = false, failAppEdit = false, existingGlobal = [], existingGuilds = {} } = {}) {
   const calls = [];
+  const mkManager = (label, existing, fail) => ({
+    fetch: async () => { calls.push(['fetch', label]); if (fail) throw new Error('403'); return existing; },
+    set: async (defs) => { calls.push(['set', label, defs]); if (fail) throw new Error('403 Missing Access'); },
+  });
   const client = {
     application: {
       edit: async (patch) => { if (failAppEdit) throw new Error('403'); calls.push(['app', patch]); },
-      commands: { set: async (defs) => { calls.push(['global', defs]); } },
+      commands: mkManager('global', existingGlobal, false),
     },
     guilds: {
-      fetch: async (id) => ({
-        commands: {
-          set: async (defs) => {
-            if (failGuild) throw new Error('Discord APIError: 403 Missing Access');
-            calls.push(['guild', id, defs]);
-          },
-        },
-      }),
+      fetch: async (id) => ({ commands: mkManager(`guild:${id}`, existingGuilds[id] || [], failGuild) }),
     },
   };
   return { client, calls };
 }
 
-test('registerAllCommands bulk-overwrites global (+guild) commands in place, without clearing first', async () => {
+test('registerAllCommands sets integration types, then one atomic PUT for global and each guild', async () => {
   const { client, calls } = mockClient();
-  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS });
+  await registerAllCommands(client, { guildIds: ['g1', 'g2'], definitions: COMMAND_DEFINITIONS });
   assert.deepEqual(calls[0], ['app', { integration_types: [0, 1] }]);
-  // set() replaces the whole set, so no set([]) first: global (DM-visible)
-  // commands are never wiped while re-registration propagates
-  assert.equal(calls.filter((c) => Array.isArray(c[1]) && c[1].length === 0).length, 0);
-  assert.equal(calls[1][0], 'guild');
-  assert.equal(calls[1][1], 'g1');
-  assert.deepEqual(calls[1][2][0].integration_types, [0]);
-  assert.equal(calls[2][0], 'global');
-  assert.equal(calls[2][1][0].integration_types[1], 1);
-  assert.deepEqual(calls[2][1][0].contexts, [0, 1, 2]);
-
-  const second = mockClient();
-  await registerAllCommands(second.client, { guildId: null, definitions: COMMAND_DEFINITIONS });
-  assert.equal(second.calls.filter((c) => c[0] === 'guild').length, 0);
-  assert.equal(second.calls.length, 2);
-  assert.equal(second.calls.filter((c) => c[0] === 'global' && c[1].length > 0).length, 1);
+  const globalSet = calls.find((c) => c[0] === 'set' && c[1] === 'global');
+  assert.ok(globalSet, 'global PUT happened');
+  assert.equal(globalSet[2][0].integration_types[1], 1);
+  assert.deepEqual(globalSet[2][0].contexts, [0, 1, 2]);
+  // one PUT per scope (full server-side replace), no GET on the rate-limited route
+  assert.equal(calls.filter((c) => c[0] === 'set').length, 3);
+  assert.equal(calls.filter((c) => c[0] === 'fetch').length, 0);
+  const g1 = calls.find((c) => c[0] === 'set' && c[1] === 'guild:g1');
+  const g2 = calls.find((c) => c[0] === 'set' && c[1] === 'guild:g2');
+  assert.ok(g1 && g2);
+  assert.deepEqual(g1[2][0].integration_types, [0]);
 });
 
-test('registerAllCommands warns but succeeds when app-edit or guild registration is denied', async () => {
+test('registerAllCommands without guild ids only touches the application and global commands', async () => {
+  const { client, calls } = mockClient();
+  await registerAllCommands(client, { guildIds: [], definitions: COMMAND_DEFINITIONS });
+  assert.ok(calls.every((c) => !String(c[1]).startsWith('guild:')));
+  assert.equal(calls.filter((c) => c[0] === 'set' && c[1] === 'global').length, 1);
+});
+
+test('registerAllCommands warns but succeeds when the app edit or a guild registration is denied', async () => {
   const { client } = mockClient({ failAppEdit: true, failGuild: true });
-  await registerAllCommands(client, { guildId: 'g1', definitions: COMMAND_DEFINITIONS }); // must not throw
-  const noGuild = mockClient({ failGuild: true });
-  await registerAllCommands(noGuild.client, { guildId: null, definitions: COMMAND_DEFINITIONS }); // must not throw
+  await registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS }); // must not throw
+});
+
+function tmpConfig() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-cmdstate-'));
+  return { dataDir, discordToken: 'tok', discordApplicationId: 'app-1' };
+}
+
+test('scheduleCommandRegistration retries on its own timer until registration succeeds', async () => {
+  const config = tmpConfig();
+  const { client, calls } = mockClient();
+  let n = 0;
+  const origSet = client.application.commands.set;
+  client.application.commands.set = async (defs) => {
+    n += 1;
+    if (n < 3) throw new Error('500 transient');
+    return origSet(defs);
+  };
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+  await new Promise((r) => setTimeout(r, 200));
+  stop();
+  assert.ok(n >= 3, `expected at least 3 attempts, got ${n}`);
+  assert.equal(calls.filter((c) => c[0] === 'set' && c[1] === 'global').length, 1);
+  // success persisted the hash
+  const state = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'commands-state.json'), 'utf8'));
+  assert.equal(state.hash, payloadHash(COMMAND_DEFINITIONS, []));
+  assert.ok(state.lastSuccessAt);
+});
+
+test('scheduleCommandRegistration makes zero API calls when the persisted hash matches', async () => {
+  const config = tmpConfig();
+  fs.writeFileSync(path.join(config.dataDir, 'commands-state.json'), JSON.stringify({
+    hash: payloadHash(COMMAND_DEFINITIONS, []),
+    lastSuccessAt: Date.now(),
+  }));
+  const { client, calls } = mockClient();
+  client.application.commands.fetch = async () => { throw new Error('must not be called'); };
+  client.application.commands.set = async () => { throw new Error('must not be called'); };
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+  await new Promise((r) => setTimeout(r, 50));
+  stop();
+  assert.equal(calls.length, 0, 'no API calls when command set is unchanged');
+});
+
+test('rate-limit failures are logged with route and retry_after (RateLimitError has empty message)', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  client.application.commands.set = async () => {
+    const err = new Error(); // @discordjs/rest RateLimitError: super() with no message
+    err.name = 'RateLimitError[/applications/app-1/commands]';
+    err.retryAfter = 7;
+    throw err;
+  };
+  const logs = [];
+  const origError = console.error;
+  console.error = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 5 });
+    await new Promise((r) => setTimeout(r, 60));
+    stop();
+  } finally {
+    console.error = origError;
+  }
+  assert.ok(logs.some((l) => l.includes('RateLimitError[/applications/app-1/commands]') && l.includes('retry_after 7s')), logs.join(' | '));
+});
+
+test('a failed global PUT does not block guild registration and is rethrown', async () => {
+  const { client, calls } = mockClient();
+  const rlErr = new Error();
+  rlErr.name = 'RateLimitError[/applications/app-1/commands]';
+  rlErr.retryAfter = 30050;
+  client.application.commands.set = async () => { throw rlErr; };
+  await assert.rejects(
+    () => registerAllCommands(client, { guildIds: ['g1'], definitions: COMMAND_DEFINITIONS }),
+    (err) => err === rlErr,
+  );
+  assert.ok(calls.some((c) => c[0] === 'set' && c[1] === 'guild:g1'), 'guild PUT still happened');
+});
+
+test('scheduler waits out a 429 cooldown, rounded up to the next tick', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  let n = 0;
+  client.application.commands.set = async () => {
+    n += 1;
+    if (n === 1) {
+      const err = new Error();
+      err.name = 'RateLimitError[/applications/app-1/commands]';
+      err.retryAfter = 0.2; // 200ms cooldown; intervalMs 50 -> wait 200ms (next tick after cooldown)
+      throw err;
+    }
+  };
+  const start = Date.now();
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 500));
+  stop();
+  assert.equal(n, 2);
+  assert.ok(Date.now() - start >= 150, `should have waited ~200ms for the cooldown, took ${Date.now() - start}ms`);
+});
+
+test('a persisted cooldown is honored across restarts (no API call during cooldown)', async () => {
+  const config = tmpConfig();
+  const notBefore = Date.now() + 300;
+  fs.writeFileSync(path.join(config.dataDir, 'commands-state.json'), JSON.stringify({ notBefore })); // no hash -> not a success skip
+  const { client, calls } = mockClient();
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(calls.length, 0, 'no API calls while the persisted cooldown is still running');
+  await new Promise((r) => setTimeout(r, 400));
+  stop();
+  assert.ok(calls.length > 0, 'attempt happened after the cooldown');
+});
+
+test('a 429 persists notBefore into commands-state.json', async () => {
+  const config = tmpConfig();
+  const { client } = mockClient();
+  client.application.commands.set = async () => {
+    const err = new Error();
+    err.name = 'RateLimitError[/applications/app-1/commands]';
+    err.retryAfter = 0.2;
+    throw err;
+  };
+  const stop = scheduleCommandRegistration(client, config, { guildIds: [], definitions: COMMAND_DEFINITIONS }, { intervalMs: 50 });
+  await new Promise((r) => setTimeout(r, 100));
+  stop();
+  const state = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'commands-state.json'), 'utf8'));
+  assert.ok(state.notBefore > Date.now(), 'cooldown persisted');
+});
+
+test('register with game: auto-joins the session; without it, no join', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const mk = (options) => makeCtx({
+    options,
+    attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  const ctx = mk({ multiworld: 'test' });
+  ctx.db.setMultiworld('test', { name: 'test', status: 'setup', userIds: [] });
+  const out = await handleCommand('register', ctx);
+  assert.match(out, /joined multiworld \*\*test\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('test').userIds, ['user-1']);
+
+  const ctx2 = mk({});
+  const out2 = await handleCommand('register', ctx2);
+  assert.match(out2, /Registered world \*\*Alice\*\*/);
+  assert.doesNotMatch(out2, /joined/); // no multiworlds exist -> no join
+  assert.equal(ctx2.db.listMultiworlds().length, 0);
+
+  // unknown game fails before registering
+  const ctx3 = mk({ multiworld: 'nope' });
+  await assert.rejects(() => handleCommand('register', ctx3), /Unknown multiworld/);
+  assert.ok(!ctx3.db.getPlayer('user-1'));
+});
+
+test('(user, multiworld) membership is unique; a user can be in multiple multiworlds via /register', async () => {
+  const yaml = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const ctx = makeCtx();
+  ctx.db.setMultiworld('g1', { name: 'g1', status: 'setup', userIds: [] });
+  ctx.db.setMultiworld('g2', { name: 'g2', status: 'setup', userIds: [] });
+  const mk = (options) => makeCtx({
+    db: ctx.db, config: ctx.config, options,
+    attachments: { yaml: { filename: 'a.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  await handleCommand('register', mk({ multiworld: 'g1' }));
+  await handleCommand('register', mk({ multiworld: 'g1' })); // again -> still once
+  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']);
+  await handleCommand('register', mk({ multiworld: 'g2' }));
+  assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']);
+  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']); // other multiworld untouched
+
+  // /players game: shows the count deduped
+  ctx.db.getMultiworld('g1').userIds.push('user-1'); // simulate a duplicate entry
+  ctx.options = { multiworld: 'g1' };
+  const out = await handleCommand('players', ctx);
+  assert.match(out, /\(1\):/);
+  assert.equal((out.match(/<@user-1>/g) || []).length, 1);
+});
+
+test('all command/option/choice names and descriptions fit Discord limits', () => {
+  // Discord rejects the whole PUT if any description exceeds 100 chars
+  const check = (d, path) => {
+    assert.ok(!d.name || d.name.length <= 32, `${path} name too long`);
+    assert.ok(d.description && d.description.length <= 100, `${path} description too long (${d.description?.length})`);
+    for (const o of d.options || []) {
+      assert.ok(o.description.length <= 100, `${path}.${o.name} option description too long (${o.description.length})`);
+      for (const c of o.choices || []) assert.ok(c.name.length <= 100, `${path}.${o.name} choice name too long`);
+      for (const so of o.options || []) assert.ok(so.description.length <= 100, `${path}.${o.name}.${so.name} too long`);
+    }
+  };
+  for (const d of COMMAND_DEFINITIONS) check(d, d.name);
+});
+
+test('/release is host-only (PERMISSIONS) and always targets the given player', async () => {
+  assert.equal(PERMISSIONS.release, 'host');
+  const byName = Object.fromEntries(COMMAND_DEFINITIONS.map((d) => [d.name, d]));
+  const playerOpt = byName.release.options.find((o) => o.name === 'player');
+  assert.equal(playerOpt.required, true, 'player: has no default — must be given');
+
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setPlayer('222', { slot: 'Bob', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1', '222'] });
+  const said = [];
+  ctx.ap = { ...realAp, say: async (config, mw, slot, text) => { said.push([slot, text]); return { ok: true, replies: ['ok'] }; } };
+
+  // by @user
+  ctx.options = { multiworld: 'g', player: '<@222>' };
+  let out = await handleCommand('release', ctx);
+  assert.match(out, /Released \*\*Bob\*\*/);
+  assert.deepEqual(said, [['Bob', '!release']]);
+
+  // by slot name
+  ctx.options = { multiworld: 'g', player: 'Bob' };
+  await handleCommand('release', ctx);
+  assert.deepEqual(said[1], ['Bob', '!release']);
+
+  // unknown @user
+  ctx.options = { multiworld: 'g', player: '<@999>' };
+  await assert.rejects(() => handleCommand('release', ctx), /No registered player/);
+
+  // not running
+  ctx.db.getMultiworld('g').status = 'stopped';
+  ctx.db.setMultiworld('g', ctx.db.getMultiworld('g'));
+  ctx.options = { multiworld: 'g', player: 'Bob' };
+  await assert.rejects(() => handleCommand('release', ctx), /not running/);
+});
+
+test('/players game: shows live connection status for a running game (single overview probe)', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'G' });
+  ctx.db.setPlayer('222', { slot: 'Bob', game: 'G' });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1', '222'] });
+  let probeCalls = 0;
+  ctx.ap = {
+    ...realAp,
+    async probe(config, mw, mode, slot, timeout, slots) {
+      probeCalls += 1;
+      assert.equal(mode, 'overview');
+      return { players: [
+        { slot: 1, name: 'Alice', status: 20 },
+        { slot: 2, name: 'Bob', status: 0 },
+      ] };
+    },
+  };
+  ctx.options = { multiworld: 'g' };
+  const out = await handleCommand('players', ctx);
+  assert.equal(probeCalls, 1);
+  assert.match(out, /Alice.*playing/);
+  assert.match(out, /Bob.*offline/);
+
+  // non-running game: no probe, no status
+  ctx.db.getMultiworld('g').status = 'setup';
+  ctx.db.setMultiworld('g', ctx.db.getMultiworld('g'));
+  probeCalls = 0;
+  const out2 = await handleCommand('players', ctx);
+  assert.equal(probeCalls, 0);
+  assert.doesNotMatch(out2, /playing/);
+});
+
+test('every command has a /commands summary and a PERMISSIONS entry', async () => {
+  const { COMMAND_SUMMARIES } = await import('../src/discord/commands.js');
+  for (const def of COMMAND_DEFINITIONS) {
+    assert.ok(COMMAND_SUMMARIES[def.name], `missing COMMAND_SUMMARIES entry for /${def.name}`);
+    assert.ok(PERMISSIONS[def.name], `missing PERMISSIONS entry for /${def.name}`);
+  }
+});
+
+test('a user can register multiple worlds (each with its own yaml) and join multiple multiworlds', async () => {
+  const ctx = makeCtx();
+  ctx.db.setMultiworld('g1', { name: 'g1', status: 'setup', userIds: [] });
+  ctx.db.setMultiworld('g2', { name: 'g2', status: 'setup', userIds: [] });
+  const yamlA = 'name: Alice\ngame: ChecksFinder\nChecksFinder: {}\n';
+  const yamlB = 'name: Alice2\ngame: HollowKnight\nHollow Knight: {}\n';
+  const mk = (yaml) => makeCtx({
+    db: ctx.db, config: ctx.config,
+    attachments: { yaml: { filename: 'p.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  let out = await handleCommand('register', mk(yamlA));
+  assert.match(out, /Registered world \*\*Alice\*\*/);
+  out = await handleCommand('register', mk(yamlB));
+  assert.match(out, /Your worlds: Alice, Alice2/);
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml')));
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice', 'Alice2']);
+
+  // register into both multiworlds: membership is per user, slots fan out per mw
+  const mkOpt = (options) => makeCtx({
+    db: ctx.db, config: ctx.config, options,
+    attachments: { yaml: { filename: 'p.yaml', size: yamlA.length, url: 'u' } },
+    download: async () => Buffer.from(yamlA),
+  });
+  await handleCommand('register', mkOpt({ multiworld: 'g1' }));
+  await handleCommand('register', mkOpt({ multiworld: 'g2' }));
+  assert.deepEqual(ctx.db.getMultiworld('g1').userIds, ['user-1']);
+  assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']);
+  assert.deepEqual(multiworldSlots(ctx.db, ctx.db.getMultiworld('g1')).sort(), ['Alice', 'Alice2']);
+
+  // register directly into a multiworld joins it
+  const ctx3 = makeCtx({ db: ctx.db, config: ctx.config, options: { multiworld: 'g2' }, attachments: { yaml: { filename: 'p.yaml', size: yamlA.length, url: 'u' } }, download: async () => Buffer.from(yamlA) });
+  out = await handleCommand('register', ctx3);
+  assert.match(out, /joined multiworld \*\*g2\*\*/);
+  assert.deepEqual(ctx.db.getMultiworld('g2').userIds, ['user-1']); // still unique
+});
+
+test('/glossary documents the terms used in the app', async () => {
+  const ctx = makeCtx();
+  const out = await handleCommand('glossary', ctx);
+  for (const term of ['Multiworld', 'World', 'Slot', 'Seed', 'yaml', 'apworld', 'Check', 'Hint', 'Release', 'room']) {
+    assert.ok(out.includes(term), `glossary mentions ${term}`);
+  }
+  assert.match(out, /multiworld:/); // the command option name
+});
+
+test('/unregister requires world: when you have several worlds; removes just that one', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setPlayer('user-1', { slot: 'Alice2', game: 'HollowKnight' });
+  fs.mkdirSync(path.join(ctx.config.dataDir, 'players', 'user-1'), { recursive: true });
+  fs.writeFileSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml'), 'x');
+  fs.writeFileSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml'), 'x');
+
+  // several worlds, no world: -> refuse
+  await assert.rejects(() => handleCommand('unregister', ctx), /several worlds.*world:/s);
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice', 'Alice2']);
+
+  // unknown world -> refuse with the list
+  ctx.options = { world: 'Nope' };
+  await assert.rejects(() => handleCommand('unregister', ctx), /no world named "Nope"/);
+
+  // specify one -> removed, other remains, yaml file gone
+  ctx.options = { world: 'Alice' };
+  const out = await handleCommand('unregister', ctx);
+  assert.match(out, /Removed world \*\*Alice\*\*/);
+  assert.match(out, /Remaining worlds: Alice2/);
+  assert.deepEqual(ctx.db.getPlayer('user-1').slots, ['Alice2']);
+  assert.ok(!fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice.yaml')));
+  assert.ok(fs.existsSync(path.join(ctx.config.dataDir, 'players', 'user-1', 'Alice2.yaml')));
+
+  // single remaining world, no world: -> removes it (not dangerous)
+  ctx.options = {};
+  const out2 = await handleCommand('unregister', ctx);
+  assert.match(out2, /no longer registered/);
+  assert.equal(ctx.db.getPlayer('user-1'), null);
+
+  // not registered at all
+  await assert.rejects(() => handleCommand('unregister', ctx), /not registered/);
+});
+
+test('/unregister releases removed slots in running multiworlds and leaves when no worlds remain', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('run', { name: 'run', status: 'running', port: 39001, userIds: ['user-1'] });
+  ctx.db.setMultiworld('setup', { name: 'setup', status: 'setup', userIds: ['user-1'] });
+  const said = [];
+  ctx.ap = { ...realAp, say: async (config, mw, slot, text) => { said.push([mw.name, slot, text]); return { ok: true, replies: [] }; } };
+  const out = await handleCommand('unregister', ctx); // single world -> removed, no world: needed
+  assert.match(out, /Removed world \*\*Alice\*\*/);
+  assert.match(out, /released \*\*Alice\*\* in running multiworld \*\*run\*\*/);
+  assert.match(out, /left multiworld \*\*run\*\*/);
+  assert.match(out, /left multiworld \*\*setup\*\*/);
+  assert.deepEqual(said, [['run', 'Alice', '!release']]); // only the running one
+  assert.equal(ctx.db.getPlayer('user-1'), null);
+  assert.deepEqual(ctx.db.getMultiworld('run').userIds, []);
+  assert.deepEqual(ctx.db.getMultiworld('setup').userIds, []);
 });

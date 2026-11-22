@@ -98,13 +98,6 @@ async function finishWithResult(interaction, ctx, produce) {
 export function createDispatcher({ config, db, download = downloadAttachment }) {
   return async function dispatch(interaction) {
     const userId = interaction.user?.id || interaction.member?.user?.id;
-    // When DISCORD_GUILD_ID is set, only interactions from that guild are
-    // accepted; user-installed (DM / private channel) interactions have no
-    // guild and are rejected in that case.
-    if (config.discordGuildId && interaction.guildId !== config.discordGuildId) {
-      await interaction.reply({ content: '❌ This app is restricted to a specific server.', ...ephemeralOpts(true) });
-      return;
-    }
     // "private responses" preference makes every reply ephemeral for that user
     const wantsPrivate = Boolean(db.getPreference(userId).privateResponses);
 

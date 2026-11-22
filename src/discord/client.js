@@ -5,7 +5,10 @@ import { createDispatcher } from './dispatch.js';
 // resume, sharding all handled by the library), command registration, and
 // interaction dispatch. We request no intents — INTERACTION_CREATE needs none.
 export function createDiscordClient({ config, db, download }) {
-  const client = new Client({ intents: [] });
+  // rejectOnRateLimit for application routes: a 429 on command registration
+  // throws immediately (logged by the scheduler, retried on its timer) instead
+  // of sitting silently in the REST queue for up to an hour.
+  const client = new Client({ intents: [], rest: { rejectOnRateLimit: ['/applications/'] } });
   const dispatch = createDispatcher({ config, db, download });
   client.once(Events.ClientReady, (readyClient) => {
     console.log(`[gateway] ready as ${readyClient.user.tag} (${readyClient.user.id})`);
