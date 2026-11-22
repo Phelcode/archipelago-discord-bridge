@@ -122,6 +122,7 @@ Roles are assigned by Discord ID:
 - `/help` — short step-by-step intro for your role: hosts get create/host a game (incl. `/upload-apworld`), players get register (upload yaml) + join, spectators get what they can view
 - `/register [game:]` — register as a player (always opens a modal with a file-upload field for your player `.yaml` + optional slot-name field); with `game:` you join that session in the same step
 - `/unregister`, `/profile [responses:]`, `/join game:`, `/leave game:`, `/players [game:]`
+- `/release [game:] [player:]` — release a player (same as AP `!release`: all their remaining items are sent out). Default is yourself; hosts can release anyone by slot name or @user. Game servers are spawned with `--release_mode enabled` so this works
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"
 - `/setup-game` — host: create a game session (always opens a modal: name + optional password + optional seed, random if empty; discards previous player registrations/yamls — everyone must `/register` again)
 - `/upload-apworld` — host: always opens a modal (`.apworld` file-upload field only; apworlds are global and usable in any game)
