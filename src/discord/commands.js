@@ -20,8 +20,8 @@ const multiworldOption = (required) => ({
 export const COMMAND_DEFINITIONS = [
   { name: 'commands', description: 'List all commands with a one-line summary' },
   { name: 'help', description: 'Step-by-step intro for your role (owner/host/player/spectator)' },
-  { name: 'register', description: 'Register as a player (modal form for your .yaml); game: also joins that session', options: [multiworldOption(false)] },
-  { name: 'unregister', description: 'Remove your player registration' },
+  { name: 'register', description: 'Register a world/slot (modal form for your .yaml); repeat for more worlds; multiworld: also joins it', options: [multiworldOption(false)] },
+  { name: 'unregister', description: 'Remove all your registered worlds and yamls' },
   {
     name: 'profile',
     description: 'Show your role/registration and choose who can see replies to your commands',
@@ -38,7 +38,7 @@ export const COMMAND_DEFINITIONS = [
       },
     ],
   },
-  { name: 'join', description: 'Join a multiworld with your registered player yaml', options: [multiworldOption(true)] },
+  { name: 'join', description: 'Join a multiworld with all your registered worlds (slots)', options: [multiworldOption(true)] },
   { name: 'leave', description: 'Leave a multiworld', options: [multiworldOption(true)] },
   {
     name: 'release',
@@ -48,7 +48,7 @@ export const COMMAND_DEFINITIONS = [
       multiworldOption(false),
     ],
   },
-  { name: 'players', description: 'List registered players (and players of a mw)', options: [multiworldOption(false)] },
+  { name: 'players', description: 'List registered players and their worlds; with multiworld: the slots in it (incl. live status)', options: [multiworldOption(false)] },
   { name: 'setup-multiworld', description: '[host] Create a new multiworld (opens a form)', options: [] },
   { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every multiworld; opens an upload form)', options: [] },
   {
@@ -60,21 +60,21 @@ export const COMMAND_DEFINITIONS = [
   { name: 'delete-multiworld', description: '[host] Delete a multiworld and its files', options: [multiworldOption(true)] },
   {
     name: 'status',
-    description: 'Show multiworlds and server status (active games by default)',
+    description: 'Show multiworlds and server status (active multiworlds by default)',
     options: [
       multiworldOption(false),
       {
-        name: 'scope', description: 'Which games to list', type: STRING, required: false,
+        name: 'scope', description: 'Which multiworlds to list', type: STRING, required: false,
         choices: [
           { name: 'active — started or waiting to be started (default)', value: 'active' },
-          { name: 'finished — stopped games', value: 'finished' },
+          { name: 'finished — stopped multiworlds', value: 'finished' },
           { name: 'all — every multiworld', value: 'all' },
         ],
       },
     ],
   },
-  { name: 'stats', description: 'Per-player stats: checks found / total and completion status', options: [multiworldOption(false)] },
-  { name: 'multiworld-stats', description: 'Gamewide stats: total checks, found, hints, seed', options: [multiworldOption(false)] },
+  { name: 'stats', description: 'Per-slot stats: checks found / total and connection status', options: [multiworldOption(false)] },
+  { name: 'multiworld-stats', description: 'Multiworld-wide totals: checks found/total, hints, seed', options: [multiworldOption(false)] },
   { name: 'hints', description: 'Show your hints (if hints are enabled)', options: [multiworldOption(false)] },
   {
     name: 'received',
@@ -304,9 +304,9 @@ const textField = (customId, labelText, { required = true, maxLength = 100 } = {
 export function registerModal() {
   return new ModalBuilder()
     .setCustomId(MODAL_REGISTER)
-    .setTitle('Register as player')
+    .setTitle('Register a world')
     .addLabelComponents(
-      fileUploadField('yaml', 'Player yaml file (.yaml)'),
+      fileUploadField('yaml', 'World yaml file (.yaml) — one per world/slot'),
       textField('name', 'Slot name override (optional)', { required: false }),
     );
 }
@@ -316,7 +316,7 @@ export function uploadApworldModal() {
     .setCustomId(MODAL_UPLOAD_APWORLD)
     .setTitle('Upload .apworld')
     .addLabelComponents(
-      fileUploadField('file', '.apworld file (available to all games)'),
+      fileUploadField('file', '.apworld file (usable in every multiworld)'),
     );
 }
 
@@ -343,21 +343,21 @@ const STATUS_NAMES = { 0: 'offline', 5: 'connected', 10: 'ready', 20: 'playing',
 export const COMMAND_SUMMARIES = {
   commands: 'List all commands with a one-line summary',
   help: 'Step-by-step intro for your role',
-  register: 'Register as a player (upload your .yaml in the form); game: auto-joins that session',
-  unregister: 'Remove your player registration',
+  register: 'Register a world/slot (upload your .yaml in the form); repeat for more; multiworld: auto-joins it',
+  unregister: 'Remove all your registered worlds and yamls',
   profile: 'Your role/registration; set private or public replies',
-  join: 'Join a multiworld with your registered yaml',
+  join: 'Join a multiworld with all your registered worlds (slots)',
   leave: 'Leave a multiworld',
   release: '[host] Release a player (AP !release) — sends out all their remaining items',
-  players: 'List registered players (🔒 = blocked), or players of one multiworld',
+  players: 'List registered players (🔒 = blocked), ; multiworld: lists its slots with live status',
   'setup-multiworld': '[host] Create a multiworld (opens a form)',
   'upload-apworld': '[host] Upload a .apworld (usable in every multiworld; opens a form)',
   start: '[host] Generate the multiworld if needed, then start the server',
   stop: '[host] Stop the server',
   'delete-multiworld': '[host] Delete a multiworld and its files',
   status: 'Multiworlds and server status (active by default; scope: finished|all)',
-  stats: 'Per-player checks found/total and completion status',
-  'multiworld-stats': 'Gamewide totals: checks, hints, seed',
+  stats: 'Per-slot checks found/total and connection status',
+  'multiworld-stats': 'Multiworld totals: checks found/total, hints, seed',
   hints: 'Your hints (if hints are enabled)',
   received: 'Items sent to you (what/who/when) — new since last check by default, scope: all for the full list',
   block: 'Mark yourself blocked — get a DM when someone sends you an item',
@@ -512,7 +512,7 @@ function formatGameStats(mw, probeResult) {
   }
   const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
   const lines = [
-    `**Gamewide stats for "${mw.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''}`,
+    `**Multiworld-wide stats for "${mw.name}"**${room.seed_name ? ` (seed ${room.seed_name})` : ''}`,
     `Checks found: **${checked}/${total}** (${pct}%) — remaining: ${total - checked}`,
     `Players: ${probeResult.players.length}, completed (goal): ${completed}`,
     `Hints: ${hints} created, ${foundHints} found`,
@@ -540,8 +540,8 @@ const handlers = {
     if (canHost(ctx.db, ctx.config, ctx.userId)) {
       lines.push(
         '**Hosting a multiworld**',
-        '1. `/setup-multiworld` — create the session (form: name, optional password, optional seed)',
-        '2. Players `/register` (upload their yaml) and `/join multiworld: <name>`',
+        '1. `/setup-multiworld` — create the multiworld (form: name, optional password, optional seed)',
+        '2. Players `/register` (one yaml per world/slot) and `/join multiworld: <name>`',
         '3. Optional: `/upload-apworld` — add a custom AP world package (.apworld, usable in every multiworld)',
         '4. `/start multiworld: <name>` — generates the multiworld and starts the server',
         '5. `/stop multiworld:` stops it, `/delete-multiworld multiworld:` removes it',
@@ -659,7 +659,7 @@ const handlers = {
   async join(ctx) {
     const mw = resolveMultiworld(ctx, ctx.options.multiworld);
     const player = ctx.db.getPlayer(ctx.userId);
-    if (!player) throw new UserError('You must /register with your player yaml before joining a mw.');
+    if (!player) throw new UserError('You must /register a world (yaml) before joining a multiworld.');
     joinMultiworld(ctx, mw);
     return `Joined multiworld **${mw.name}** as slot **${player.slot}**.`;
   },
