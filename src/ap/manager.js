@@ -167,6 +167,7 @@ export function startGame(config, db, game, port) {
     '--port', String(port),
     '--auto_shutdown', '0',
     '--loglevel', 'info',
+    '--release_mode', 'enabled', // lets the bridge send !release as the target slot
   ];
   if (game.password) args.push('--password', game.password);
   const child = spawn(config.apPython, args, {
@@ -310,6 +311,15 @@ export async function probe(config, game, mode, slot, timeoutMs, knownSlots, onl
   const slots = knownSlots || [];
   const req = { mode, slot: slot ?? null, only: onlySlots?.length ? onlySlots : null };
   const response = await daemonRequest(config, game, req, timeoutMs, slots);
+  if (response.error) throw new Error(response.error);
+  return response;
+}
+
+// Sends a text command (e.g. "!release") as the given slot over the game's
+// persistent probe daemon. Used by /release.
+export async function say(config, game, slotName, text) {
+  const req = { mode: 'say', name: slotName, text };
+  const response = await daemonRequest(config, game, req, 15000, [slotName]);
   if (response.error) throw new Error(response.error);
   return response;
 }

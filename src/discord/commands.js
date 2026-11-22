@@ -40,6 +40,14 @@ export const COMMAND_DEFINITIONS = [
   },
   { name: 'join', description: 'Join a game session with your registered player yaml', options: [gameOption(true)] },
   { name: 'leave', description: 'Leave a game session', options: [gameOption(true)] },
+  {
+    name: 'release',
+    description: 'Release a player (like AP !release): sends out all their remaining items',
+    options: [
+      gameOption(false),
+      { name: 'player', description: 'Slot name or @user to release (default: yourself; others need host)', type: STRING, required: false },
+    ],
+  },
   { name: 'players', description: 'List registered players (and players of a game)', options: [gameOption(false)] },
   { name: 'setup-game', description: '[host] Create a new game session (opens a form)', options: [] },
   { name: 'upload-apworld', description: '[host] Upload a custom .apworld file (usable in every game; opens an upload form)', options: [] },
@@ -254,6 +262,7 @@ export const PERMISSIONS = {
   profile: 'all',
   join: 'all',
   leave: 'all',
+  release: 'all',
   players: 'all',
   'setup-game': 'host',
   'upload-apworld': 'host',
@@ -339,6 +348,7 @@ const COMMAND_SUMMARIES = {
   profile: 'Your role/registration; set private or public replies',
   join: 'Join a game session with your registered yaml',
   leave: 'Leave a game session',
+  release: 'Release a player (AP !release) — sends out all their remaining items; others need host',
   players: 'List registered players (🔒 = blocked), or players of one game',
   'setup-game': '[host] Create a game session (opens a form)',
   'upload-apworld': '[host] Upload a .apworld (usable in every game; opens a form)',
@@ -542,6 +552,7 @@ const handlers = {
         '**Playing**',
         '1. `/register game: <name>` — upload your yaml and join in one step (or `/register`, then `/join game: <name>`)',
         '2. `/stats`, `/game-stats` — watch progress; `/hints`, `/received` — your hints and items',
+        '3. Can\'t play anymore? `/release game: <name>` sends out all your remaining items (hosts can release others)',
       );
     } else {
       lines.push(
@@ -656,6 +667,28 @@ const handlers = {
     game.playerIds = (game.playerIds || []).filter((id) => id !== ctx.userId);
     ctx.db.setGame(game.name, game);
     return `Left game **${game.name}**.`;
+  },
+
+  async release(ctx) {
+    const game = resolveGame(ctx, ctx.options.game);
+    if (game.status !== 'running') throw new UserError(`Game **${game.name}** is not running (status: ${game.status}).`);
+    const opt = ctx.options.player;
+    let targetUserId = ctx.userId;
+    let slotName = null;
+    if (opt) {
+      const mention = opt.match(/^<@!?(\d+)>$/);
+      if (mention) targetUserId = mention[1];
+      else slotName = opt;
+    }
+    if (targetUserId !== ctx.userId && !canHost(ctx.db, ctx.config, ctx.userId)) {
+      throw new UserError('Only hosts can release other players — use /release with no player: to release yourself.');
+    }
+    const player = ctx.db.getPlayer(targetUserId);
+    if (!player) throw new UserError(opt ? `No registered player matches "${opt}".` : 'You must /register first.');
+    const slot = slotName || player.slot;
+    const res = await ctx.ap.say(ctx.config, game, slot, '!release');
+    const reply = res.replies?.length ? `\nServer: ${res.replies.join(' ')}` : '';
+    return `✅ Released **${slot}** in game **${game.name}** — all their remaining items are sent out.${reply}`;
   },
 
   async players(ctx) {

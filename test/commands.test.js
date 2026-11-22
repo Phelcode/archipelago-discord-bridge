@@ -817,3 +817,44 @@ test('all command/option/choice names and descriptions fit Discord limits', () =
   };
   for (const d of COMMAND_DEFINITIONS) check(d, d.name);
 });
+
+test('/release releases yourself by default, others only for hosts, and needs a running game', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setGame('g', { name: 'g', status: 'running', port: 39001, playerIds: ['user-1'] });
+  const said = [];
+  ctx.ap = { ...realAp, say: async (config, game, slot, text) => { said.push([slot, text]); return { ok: true, replies: ['ok'] }; } };
+
+  ctx.options = { game: 'g' };
+  let out = await handleCommand('release', ctx);
+  assert.match(out, /Released \*\*Alice\*\*/);
+  assert.deepEqual(said, [['Alice', '!release']]);
+
+  // non-host cannot release someone else
+  ctx.db.setPlayer('222', { slot: 'Bob', game: 'ChecksFinder' });
+  ctx.options = { game: 'g', player: '<@222>' };
+  await assert.rejects(() => handleCommand('release', ctx), /Only hosts/);
+
+  // host can
+  ctx.db.addHost('user-1');
+  out = await handleCommand('release', ctx);
+  assert.match(out, /Released \*\*Bob\*\*/);
+  assert.deepEqual(said[1], ['Bob', '!release']);
+
+  // slot name works too
+  ctx.options = { game: 'g', player: 'Bob' };
+  await handleCommand('release', ctx);
+  assert.deepEqual(said[2], ['Bob', '!release']);
+
+  // unregistered self
+  await assert.rejects(
+    () => handleCommand('release', makeCtx({ userId: 'user-9', db: ctx.db, config: ctx.config, options: { game: 'g' }, ap: ctx.ap })),
+    /register/,
+  );
+
+  // not running
+  ctx.db.getGame('g').status = 'stopped';
+  ctx.db.setGame('g', ctx.db.getGame('g'));
+  ctx.options = { game: 'g' };
+  await assert.rejects(() => handleCommand('release', ctx), /not running/);
+});

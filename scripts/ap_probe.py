@@ -155,7 +155,7 @@ async def run_overview(sc: SlotConns, timeout, known_slots, only, player_slots):
     return build_output(sc, games, results, "overview", None, package)
 
 
-async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_slots=()):
+async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_slots=(), say=None):
     if sc.room is None:
         # need at least one connection to learn the room/slot layout
         first = next(iter(only)) if only else (known_slots[0] if known_slots else None)
@@ -171,6 +171,22 @@ async def run_probe(sc: SlotConns, mode, want_slot, timeout, only=None, known_sl
         player_slots = {s: info for s, info in player_slots.items() if info.get("name") in only}
     if not player_slots:
         raise RuntimeError("server reports no player slots")
+
+    if mode == "say":
+        # Send a text command (e.g. "!release") as one slot; collect the reply.
+        name = (say or {}).get("name") or (next(iter(only)) if only else None) or (known_slots[0] if known_slots else None)
+        ws, conn = await sc.get(name, False)
+        await ws.send(json.dumps([{"cmd": "Say", "text": (say or {}).get("text", "")}]))
+        replies = []
+        try:
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), 3.0)
+                for msg in json.loads(raw):
+                    if msg.get("cmd") in ("Print", "PrintJSON") and msg.get("text"):
+                        replies.append(msg["text"])
+        except (asyncio.TimeoutError, TimeoutError):
+            pass
+        return {"ok": True, "slot": name, "replies": replies}
 
     if mode == "overview":
         return await run_overview(sc, timeout, known_slots, only, player_slots)
@@ -300,7 +316,7 @@ async def daemon(sc: SlotConns, timeout, known_slots):
             req = json.loads(line)
             out = await run_probe(sc, req.get("mode", "stats"), req.get("slot"), timeout,
                                   only=set(req["only"]) if req.get("only") else None,
-                                  known_slots=known_slots)
+                                  known_slots=known_slots, say=req if req.get("mode") == "say" else None)
         except Exception as exc:
             out = {"error": str(exc)}
         sys.stdout.write(json.dumps(out) + "\n")
