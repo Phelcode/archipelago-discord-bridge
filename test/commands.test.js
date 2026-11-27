@@ -305,6 +305,13 @@ test('status lists active games by default, finished via scope, everything via a
   assert.doesNotMatch(out, /\*\*live\*\*/);
 });
 
+test('status shows the Archipelago version players must match', async () => {
+  const ctx = makeCtx({ config: { ...makeConfig(), apVersion: '0.6.9' } });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: [] });
+  const out = await handleCommand('status', ctx);
+  assert.match(out, /Archipelago version: 0\.6\.9/);
+});
+
 test('status with no games explains how to create one', async () => {
   const ctx = makeCtx();
   const out = await handleCommand('status', ctx);
