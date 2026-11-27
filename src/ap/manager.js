@@ -123,7 +123,7 @@ export async function generateMultiworld(config, db, mw, seed) {
   installApworlds(config, mw);
   const staged = stagePlayers(config, db, mw);
   if (staged.length === 0) {
-    throw new Error('No players joined this multiworld yet. Players must /register and /join first.');
+    throw new Error(`No players joined this multiworld yet. Players must /register multiworld: ${mw.name} first.`);
   }
   const outputDir = path.join(multiworldDir(config, mw), 'output');
   const seedNumber = resolveSeed(seed);

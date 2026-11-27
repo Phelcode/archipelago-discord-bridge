@@ -767,7 +767,7 @@ const handlers = {
           lines.push(`• <@${userId}> — slot **${world.slot}** (${world.game})${blockedTag(userId)}${online}`);
         }
       }
-      if (!lines[1]) lines.push('(none yet — players use /join)');
+      if (!lines[1]) lines.push(`(none yet — players use /register multiworld: ${mw.name})`);
       return lines.join('\n');
     }
     const lines = ['**Registered players:**'];
@@ -813,7 +813,7 @@ const handlers = {
       createdAt: new Date().toISOString(),
     };
     ctx.db.setMultiworld(slug, mw);
-    return `Created multiworld **${slug}** (player registrations and yamls are reset — everyone must /register again). Next: players /register and /join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
+    return `Created multiworld **${slug}** (player registrations and yamls are reset — everyone must /register again). Next: players /register multiworld: ${slug} to join, hosts /upload-apworld, then /start — it generates the multiworld (seed ${seedRaw || 'random'}) and starts the server.`;
   },
 
   async 'upload-apworld'(ctx) {
