@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { userIdsOf } from '../store.js';
 
 // Archipelago accepts seeds in [0, 10^20); we stay well inside safe-integer
@@ -56,6 +57,52 @@ function runProcess(config, args, options = {}) {
       else reject(new Error(`Process exited with code ${code}\n${stdout.slice(-2000)}\n${stderr.slice(-2000)}`));
     });
   });
+}
+
+// Some worlds put a per-player file at the root of the generated AP_*.zip
+// (e.g. Minecraft's <slot>.apmc) that the player must load in their game.
+// Extracts those root-level files (skipping subfolders like data/ and
+// non-patch extensions) into outDir. Returns a map of basename-without-
+// extension -> extracted path. Pure JS (zlib) so no extra dependency is
+// needed; handles stored (0) and deflated (8) entries.
+export function extractPlayerFiles(zipPath, outDir) {
+  const buf = fs.readFileSync(zipPath);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65536); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error(`${zipPath} is not a zip archive`);
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  fs.mkdirSync(outDir, { recursive: true });
+  const skipExt = new Set(['yaml', 'yml', 'txt', 'json', 'md']);
+  const out = {};
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('corrupt zip central directory');
+    const method = buf.readUInt16LE(off + 10);
+    const compSize = buf.readUInt32LE(off + 20);
+    const nameLen = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const commentLen = buf.readUInt16LE(off + 32);
+    const localOff = buf.readUInt32LE(off + 42);
+    const name = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    off += 46 + nameLen + extraLen + commentLen;
+    const dot = name.lastIndexOf('.');
+    if (name.endsWith('/') || name.includes('/') || dot <= 0) continue;
+    if (skipExt.has(name.slice(dot + 1).toLowerCase())) continue;
+    const lNameLen = buf.readUInt16LE(localOff + 26);
+    const lExtraLen = buf.readUInt16LE(localOff + 28);
+    const dataOff = localOff + 30 + lNameLen + lExtraLen;
+    const raw = buf.subarray(dataOff, dataOff + compSize);
+    let data = null;
+    if (method === 0) data = raw;
+    else if (method === 8) data = zlib.inflateRawSync(raw);
+    if (!data) continue;
+    const dest = path.join(outDir, name);
+    fs.writeFileSync(dest, data);
+    out[name.slice(0, dot)] = dest;
+  }
+  return out;
 }
 
 // .apworld files are global: uploaded once, they are installed into every

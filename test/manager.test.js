@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, extractPlayerFiles } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
+import { buildZip } from './zip.js';
 
 test('resolveSeed passes through an explicit seed', () => {
   assert.equal(resolveSeed(12345), 12345);
@@ -94,4 +95,25 @@ test('stagePlayers stages every world (slot) of every member user', async () => 
   const staged = stagePlayers(config, db, mw);
   assert.deepEqual(staged.sort(), ['Alice', 'Alice2', 'Bob']);
   assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')).sort(), ['Alice.yaml', 'Alice2.yaml', 'Bob.yaml']);
+});
+test('extractPlayerFiles pulls root-level player files (e.g. .apmc) from an AP zip, skipping subfolders and yaml', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-zip-'));
+  const zip = path.join(dir, 'AP_123.zip');
+  fs.writeFileSync(zip, buildZip([
+    { name: 'Alice.apmc', data: Buffer.from('alice-apmc-data'), deflate: true },
+    { name: 'Bob.apmc', data: Buffer.from('bob-apmc-data') },
+    { name: 'data/multidata', data: Buffer.from('multidata') },
+    { name: 'Alice.yaml', data: Buffer.from('name: Alice') },
+    { name: 'readme.txt', data: Buffer.from('hi') },
+  ]));
+  const outDir = path.join(dir, 'player-files');
+  const files = extractPlayerFiles(zip, outDir);
+  assert.deepEqual(Object.keys(files).sort(), ['Alice', 'Bob']);
+  assert.equal(fs.readFileSync(files.Alice, 'utf8'), 'alice-apmc-data');
+  assert.equal(fs.readFileSync(files.Bob, 'utf8'), 'bob-apmc-data');
+  assert.ok(!fs.existsSync(path.join(outDir, 'data')));
+  // not a zip -> throws
+  const bad = path.join(dir, 'bad.zip');
+  fs.writeFileSync(bad, 'PK not really');
+  assert.throws(() => extractPlayerFiles(bad, path.join(dir, 'out2')));
 });
