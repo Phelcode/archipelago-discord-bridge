@@ -12,3 +12,8 @@ orjson
 typing_extensions
 pathspec
 bsdiff4
+# Not listed in upstream requirements.txt: full installs get it transitively
+# via the GUI deps (kivy), but core worlds import it at load time (e.g.
+# worlds/osrs via LogicCSV/LogicCSVToPython.py); a world that fails to import
+# makes its game ungeneratable ("No world found to handle game ...").
+requests
