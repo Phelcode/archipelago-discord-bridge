@@ -39,7 +39,11 @@ Roles are assigned by Discord ID:
   `/stats`, `/multiworld-stats` and
   `/hints` query the running server over its websocket protocol as a spectator
   (`scripts/ap_probe.py`) and report checks per player, completion status, hint
-  points, gamewide totals and hints.
+  points, gamewide totals and hints. Worlds that ship a per-player file in the
+  seed zip (e.g. Minecraft's `.apmc`) get it **posted in the channel `/start`
+  was run in**, with each player mentioned (posted, not DM'd, so it also works
+  for users who never opened a DM with the app); the same happens when a
+  player `/register`s into an already-generated multiworld.
 
 ## Setup
 
@@ -127,7 +131,7 @@ Roles are assigned by Discord ID:
 - `/commands` — every command on its own line with a one-line summary
 - `/glossary` — Archipelago terms used in this app (multiworld, world, slot, seed, room/server, yaml, apworld, check, hint, release, blocked)
 - `/help` — short step-by-step intro for your role: hosts get create/host a multiworld (incl. `/upload-apworld`), players get register (upload a yaml per world, joins via multiworld:), spectators get what they can view
-- `/register [multiworld:]` — register a world/slot (always opens a modal with a file-upload field for your `.yaml` + optional slot-name field). Repeat to register more worlds (one yaml each); with `multiworld:` you join that multiworld in the same step
+- `/register [multiworld:]` — register a world/slot (always opens a modal with a file-upload field for your `.yaml` + optional slot-name field). Repeat to register more worlds (one yaml each); with `multiworld:` you join that multiworld in the same step (if it's already generated, your per-player seed file — e.g. `.apmc` — is posted in the channel)
 - `/unregister [world:]` — removes one world/yaml (`world:` required if you have several); releases the removed slot(s) in running multiworlds you're in (`!release`), and when no worlds remain, leaves all multiworlds. `/profile [responses:]`, `/players [multiworld:]` (for a running multiworld, also shows each slot's live connection status: offline/connected/ready/playing/goal reached)
 - `/release player: [multiworld:]` — [host] release a slot or user (same as AP `!release`: all remaining items are sent out). `player:` is required (slot name or @user; a user releases all their slots); servers are spawned with `--release_mode enabled`
   - `/profile` shows your role and registration; `/profile responses: private` makes **all** replies to your commands private (only you see them) — choice labels say "private — only I see the replies" / "public — everyone sees the replies (default)"

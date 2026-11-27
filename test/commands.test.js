@@ -10,6 +10,7 @@ import {
   registerModal, uploadApworldModal, setupGameModal, scheduleCommandRegistration, payloadHash,
   ALWAYS_MODAL, COMMAND_DEFINITIONS, MODAL_REGISTER, MODAL_UPLOAD_APWORLD, MODAL_SETUP_MULTIWORLD, PERMISSIONS, multiworldSlots } from '../src/discord/commands.js';
 import * as realAp from '../src/ap/manager.js';
+import { buildZip } from './zip.js';
 
 function makeConfig() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-cfg-'));
@@ -608,6 +609,84 @@ test('start with a bad stored seed fails clearly and stays in setup', async () =
   ctx.options = { multiworld: 'g' };
   await assert.rejects(() => handleCommand('start', ctx), /integer/);
   assert.equal(ctx.db.getMultiworld('g').status, 'setup');
+});
+
+test('start DMs each member their per-player file from the generated zip (e.g. Minecraft .apmc)', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  const zip = path.join(ctx.config.dataDir, 'AP_9.zip');
+  fs.writeFileSync(zip, buildZip([
+    { name: 'AP_9_P1_Alice.apmc', data: Buffer.from('alice-apmc'), deflate: true },
+    { name: 'AP_9_Spoiler.txt', data: Buffer.from('spoiler') },
+    { name: 'data/multidata', data: Buffer.from('m') },
+  ]));
+  ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: ['user-1'] });
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'Minecraft' });
+  const posts = [];
+  ctx.postToChannel = async (text, files) => { posts.push({ text, files }); };
+  ctx.ap = {
+    ...realAp,
+    generateMultiworld: async () => ({ multidata: zip, spoiler: '/tmp/s.txt', seed: '9', seedNumber: 9, players: ['Alice'], log: '' }),
+    startMultiworld: () => ({ pid: 1, logFile: '/tmp/l' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => false,
+  };
+  ctx.options = { multiworld: 'g' };
+  const out = await handleCommand('start', ctx);
+  assert.match(out, /Player files posted in this channel/);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].text, /Player files for multiworld \*\*g\*\*/);
+  assert.match(posts[0].text, /<@user-1>/);
+  assert.equal(posts[0].files.length, 1); // spoiler txt is not posted
+  assert.equal(posts[0].files[0].name, 'AP_9_P1_Alice.apmc');
+  assert.equal(posts[0].files[0].attachment.toString(), 'alice-apmc');
+});
+
+test('start with a zip that has no player files (or a broken zip) does not fail or DM', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  const zip = path.join(ctx.config.dataDir, 'AP_1.zip');
+  fs.writeFileSync(zip, buildZip([{ name: 'data/multidata', data: Buffer.from('m') }]));
+  ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: ['user-1'] });
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  const posts = [];
+  ctx.postToChannel = async (...a) => { posts.push(a); };
+  ctx.ap = {
+    ...realAp,
+    generateMultiworld: async () => ({ multidata: zip, spoiler: '/tmp/s', seed: '1', seedNumber: 1, players: ['Alice'], log: '' }),
+    startMultiworld: () => ({ pid: 1, logFile: '/tmp/l' }),
+    waitForPort: async () => true,
+    isServerProcessAlive: () => false,
+  };
+  ctx.options = { multiworld: 'g' };
+  const out = await handleCommand('start', ctx);
+  assert.match(out, /running/);
+  assert.doesNotMatch(out, /Player files posted/);
+  assert.equal(posts.length, 0);
+});
+
+test('register into an already-generated multiworld DMs the joining player their file', async () => {
+  const ctx = makeCtx({ userId: 'host-1' });
+  ctx.db.addHost('host-1');
+  const zip = path.join(ctx.config.dataDir, 'AP_5.zip');
+  fs.writeFileSync(zip, buildZip([{ name: 'AP_5_P1_Alice.apmc', data: Buffer.from('apmc!') }]));
+  ctx.db.setMultiworld('g', { name: 'g', status: 'generated', multidata: zip, seed: '5', seedNumber: 5, userIds: [] });
+  const yaml = 'name: Alice\ngame: Minecraft\nMinecraft: {}\n';
+  const playerCtx = makeCtx({
+    db: ctx.db, config: ctx.config, userId: 'user-1',
+    options: { multiworld: 'g' },
+    attachments: { yaml: { filename: 'alice.yaml', size: yaml.length, url: 'u' } },
+    download: async () => Buffer.from(yaml),
+  });
+  const posts = [];
+  playerCtx.postToChannel = async (text, files) => { posts.push({ text, files }); };
+  const out = await handleCommand('register', playerCtx);
+  assert.match(out, /joined multiworld \*\*g\*\*/);
+  assert.match(out, /\*\*AP_5_P1_Alice\.apmc\*\* → <@user-1>/);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].text, /<@user-1>/);
+  assert.equal(posts[0].files[0].name, 'AP_5_P1_Alice.apmc');
+  assert.equal(posts[0].files[0].attachment.toString(), 'apmc!');
 });
 
 

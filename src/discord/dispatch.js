@@ -29,11 +29,17 @@ export function chunkContent(text, max = 1900) {
 }
 
 // Normalize a discord.js interaction into the plain ctx shape the handlers use.
+// postToChannel posts into the channel the interaction came from (used for
+// per-player files from the generated zip, e.g. Minecraft's .apmc — a DM
+// would fail for users who never opened a DM with the app).
 function interactionToCtx(interaction, { config, db, download }) {
   const userId = interaction.user?.id || interaction.member?.user?.id;
   const userName = interaction.user?.username || interaction.member?.user?.username || userId;
   const ctx = {
     config, db, userId, userName, download,
+    postToChannel: interaction.channel
+      ? (text, files) => interaction.channel.send(files?.length ? { content: text, files } : text)
+      : null,
     options: {}, attachments: {}, subcommand: null, subOptions: {},
     modalCustomId: null, modal: null,
   };

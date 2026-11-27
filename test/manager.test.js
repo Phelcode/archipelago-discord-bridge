@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
+import { buildZip } from './zip.js';
 
 test('resolveSeed passes through an explicit seed', () => {
   assert.equal(resolveSeed(12345), 12345);
@@ -95,7 +96,6 @@ test('stagePlayers stages every world (slot) of every member user', async () => 
   assert.deepEqual(staged.sort(), ['Alice', 'Alice2', 'Bob']);
   assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')).sort(), ['Alice.yaml', 'Alice2.yaml', 'Bob.yaml']);
 });
-
 test('ensureApRequirements pip-installs the requirements file into the AP venv, and skips when not possible', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-req-'));
   const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apdir-'));
@@ -121,4 +121,33 @@ test('ensureApRequirements pip-installs the requirements file into the AP venv, 
   // default path points at the repo's docker/requirements-ap.txt
   assert.ok(apRequirementsPath().endsWith(path.join('docker', 'requirements-ap.txt')));
   assert.ok(fs.existsSync(apRequirementsPath()));
+});
+
+test('extractPlayerFiles pulls root-level output files from an AP zip (any entry but spoiler/hints/multidata), parsing AP_<seed>_P<n>_<player> names', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-zip-'));
+  const zip = path.join(dir, 'AP_123.zip');
+  fs.writeFileSync(zip, buildZip([
+    { name: 'AP_123_P1_Alice.apmc', data: Buffer.from('alice-apmc-data'), deflate: true },
+    { name: 'AP_123_P2_Bob.apmc', data: Buffer.from('bob-apmc-data') },
+    { name: 'AP_123_Spoiler.txt', data: Buffer.from('spoiler') },
+    { name: 'AP_123_Hints.txt', data: Buffer.from('hints') },
+    { name: 'data/multidata', data: Buffer.from('multidata') },
+    { name: 'AP_123.zip', data: Buffer.from('nested') },
+    { name: 'plain.apbp', data: Buffer.from('plain-name-entry') },
+  ]));
+  const outDir = path.join(dir, 'player-files');
+  const files = extractPlayerFiles(zip, outDir);
+  assert.deepEqual(files.map((f) => [f.player, f.entry]).sort(), [
+    ['Alice', 'AP_123_P1_Alice.apmc'],
+    ['Bob', 'AP_123_P2_Bob.apmc'],
+    ['plain', 'plain.apbp'],
+  ]);
+  assert.equal(fs.readFileSync(files[0].path, 'utf8'), 'alice-apmc-data');
+  assert.equal(fs.readFileSync(files[2].path, 'utf8'), 'plain-name-entry');
+  assert.ok(!fs.existsSync(path.join(outDir, 'data')));
+  assert.ok(!fs.existsSync(path.join(outDir, 'AP_123_Spoiler.txt')));
+  // not a zip -> throws
+  const bad = path.join(dir, 'bad.zip');
+  fs.writeFileSync(bad, 'PK not really');
+  assert.throws(() => extractPlayerFiles(bad, path.join(dir, 'out2')));
 });

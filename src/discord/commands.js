@@ -446,6 +446,57 @@ export function multiworldSlots(db, mw) {
   return [...new Set(slots)];
 }
 
+// Some worlds put a per-player file at the root of the generated AP_*.zip
+// (e.g. Minecraft's <slot>.apmc). Extract them and post them in the channel
+// the command was run in, mentioning each player (a DM can fail for users who
+// never opened a DM with the app). Returns human-readable notes about what
+// was posted.
+async function sendPlayerFiles(ctx, mw, onlyUserId = null) {
+  const notes = [];
+  if (!mw.multidata || !fs.existsSync(mw.multidata)) return notes;
+  if (typeof ctx.postToChannel !== 'function') return notes;
+  let files;
+  try {
+    files = ctx.ap.extractPlayerFiles(mw.multidata, path.join(ctx.ap.multiworldDir(ctx.config, mw), 'player-files'));
+  } catch (err) {
+    console.error(`[files] could not extract player files from ${mw.multidata}: ${err.message}`);
+    return notes;
+  }
+  // zip entries are named AP_<seed>_P<n>_<playerName>.<ext>; the player name
+  // is the yaml "name", which is the slot unless overridden at registration
+  const byPlayer = new Map(files.map((f) => [f.player, f]));
+  const attachments = [];
+  const lines = [];
+  for (const userId of userIdsOf(mw)) {
+    if (onlyUserId && userId !== onlyUserId) continue;
+    for (const world of ctx.db.getWorlds(userId)) {
+      let file = byPlayer.get(world.slot);
+      if (!file) {
+        try {
+          const doc = YAML.parse(fs.readFileSync(path.join(ctx.config.dataDir, 'players', userId, `${world.slot}.yaml`), 'utf8'));
+          if (doc?.name) file = byPlayer.get(String(doc.name));
+        } catch { /* no staged yaml */ }
+      }
+      if (!file) continue;
+      attachments.push({ attachment: fs.readFileSync(file.path), name: file.entry });
+      lines.push(`• **${file.entry}** → <@${userId}> (${world.slot}, ${world.game})`);
+      notes.push(`**${file.entry}** → <@${userId}> (${world.slot})`);
+    }
+  }
+  if (!attachments.length) return notes;
+  const header = `Player files for multiworld **${mw.name}** — load yours in your game:`;
+  for (let i = 0; i < attachments.length; i += 10) { // Discord allows 10 files per message
+    try {
+      const chunkLines = lines.slice(i, i + 10).join('\n');
+      await ctx.postToChannel(i === 0 ? `${header}\n${chunkLines}` : chunkLines, attachments.slice(i, i + 10));
+    } catch (err) {
+      console.error(`[files] posting player files failed: ${err.message}`);
+      notes.push(`could not post player files (${err.message})`);
+    }
+  }
+  return notes;
+}
+
 function parsePlayerYaml(buffer, overrideName) {
   let text;
   try {
@@ -608,7 +659,16 @@ const handlers = {
         + (active.length > 1 ? ` ${active.length} active multiworlds (${active.map((m) => m.name).join(', ')}) — re-run /register with multiworld: <name> to join one.` : '');
     }
     joinMultiworld(ctx, target);
-    return `Registered world **${slot}** (${game}) and joined multiworld **${target.name}** (your worlds there: ${mySlots}).`;
+    let fileNote = '';
+    if (target.multidata && fs.existsSync(target.multidata)) {
+      try {
+        const notes = await sendPlayerFiles(ctx, target, ctx.userId);
+        if (notes.length) fileNote = ` ${notes.join('; ')}.`;
+      } catch (err) {
+        console.error(`[files] ${err.message}`);
+      }
+    }
+    return `Registered world **${slot}** (${game}) and joined multiworld **${target.name}** (your worlds there: ${mySlots}).${fileNote}`;
   },
 
   async unregister(ctx) {
@@ -849,10 +909,17 @@ const handlers = {
     mw.pid = pid;
     mw.startedAt = new Date().toISOString();
     ctx.db.setMultiworld(mw.name, mw);
+    let fileNotes = [];
+    try {
+      fileNotes = await sendPlayerFiles(ctx, mw);
+    } catch (err) {
+      console.error(`[files] ${err.message}`);
+    }
     return [
       gen ? `Generated multiworld for **${mw.name}** (seed ${mw.seedNumber}, id ${mw.seed}; players: ${gen.players.join(', ')}; spoiler: \`${mw.spoiler}\`).` : null,
       `Server for **${mw.name}** is running: \`${ctx.config.publicHost}:${port}\`${mw.password ? ' (password required)' : ' (no password)'}.`,
       `Seed: ${mw.seedNumber ?? mw.seed ?? '?'}, log: \`${logFile}\``,
+      fileNotes.length ? `Player files posted in this channel:\n${fileNotes.map((n) => `• ${n}`).join('\n')}` : null,
     ].filter(Boolean).join('\n');
   },
 
