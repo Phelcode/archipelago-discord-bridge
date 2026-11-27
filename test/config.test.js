@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { loadConfig } from '../src/config.js';
 
 const base = {
@@ -44,4 +47,15 @@ test('env overrides are applied', () => {
   assert.equal(config.hintsEnabled, false);
   assert.equal(config.publicHost, 'ap.example.com');
   assert.equal(config.maxAttachmentBytes, 5 * 1024 * 1024);
+});
+
+test('apVersion is detected from the AP checkout Utils.py, AP_VERSION env wins, fallback 0.6.9', () => {
+  const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apver-'));
+  fs.writeFileSync(path.join(apDir, 'Utils.py'), '__version__ = "0.6.9"\nversion_tuple = tuplize_version(__version__)\n');
+  assert.equal(loadConfig({ ...base, AP_DIR: apDir }).apVersion, '0.6.9');
+  fs.writeFileSync(path.join(apDir, 'Utils.py'), '__version__ = "0.7.1"\n');
+  assert.equal(loadConfig({ ...base, AP_DIR: apDir }).apVersion, '0.7.1');
+  assert.equal(loadConfig({ ...base, AP_DIR: apDir, AP_VERSION: '0.6.9' }).apVersion, '0.6.9');
+  // no AP checkout present: fallback
+  assert.equal(loadConfig({ ...base, AP_DIR: path.join(apDir, 'missing') }).apVersion, '0.6.9');
 });

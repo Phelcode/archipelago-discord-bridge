@@ -952,7 +952,11 @@ const handlers = {
     }
     const apworlds = ctx.ap.listApworlds(ctx.config);
     const header = scope === 'all' ? '**All multiworlds**' : scope === 'finished' ? '**Finished multiworlds**' : '**Active multiworlds** (started or waiting to be started)';
-    const lines = [header, `Available .apworld files (used by every multiworld): ${apworlds.length ? apworlds.join(', ') : 'none'}`];
+    const lines = [
+      header,
+      `Archipelago version: ${ctx.config.apVersion || 'unknown'} (players need clients/mods built for this version)`,
+      `Available .apworld files (used by every multiworld): ${apworlds.length ? apworlds.join(', ') : 'none'}`,
+    ];
     for (const g of mws) lines.push(formatMultiworldLine(ctx, g));
     return lines.join('\n');
   },

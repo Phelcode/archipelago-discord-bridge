@@ -107,15 +107,24 @@ Roles are assigned by Discord ID:
 
    **Archipelago itself is not in this repo.** On boot the entrypoint clones
    [Archipelago](https://github.com/ArchipelagoMW/Archipelago) into
-   `/opt/Archipelago` on first run and updates it to the newest version on every
-   boot (`AP_UPDATE=false` keeps the existing copy; `AP_REPO_URL`/`AP_BRANCH`
-   override the source). The image bakes in only Archipelago's *Python
+   `/opt/Archipelago` on first run and updates it on every boot to the newest
+   *stable release tag* by default — generated seeds embed the generator's
+   version and data-file format, and players run released clients/mods, so a
+   seed rolled from `main` can be rejected by every released mod (e.g. the
+   Minecraft mod then reports "APMC data file wrong version" /
+   "incompatible randomizer version"). Set `AP_BRANCH=main` for bleeding edge,
+   `AP_UPDATE=false` to keep the existing copy, `AP_REPO_URL`/`AP_BRANCH` to
+   override the source. The synced AP version is auto-detected from the
+   checkout (`AP_VERSION` overrides) and shown by `/status`. The image bakes in only Archipelago's *Python
    dependencies* (`docker/requirements-ap.txt`) in a venv at `/opt/ap-venv`.
    The base image is `node:22-trixie-slim` (Debian 13, Python 3.13); Archipelago
-   requires Python 3.12–3.13. The self-update only syncs app code, not the base
-   image or the venv — rebuild with `docker compose up -d --build` after changing
-   the image. The Dockerfile fails the build if the venv Python is outside
-   3.12–3.13, and the entrypoint logs a warning on boot if AP can't be imported.
+   requires Python 3.12–3.13. On every boot the app re-syncs the venv against the
+   (possibly self-updated) `docker/requirements-ap.txt`, so Python-dependency
+   changes apply on a plain container restart; only base-image changes
+   (Dockerfile, apt packages, Python version) still need
+   `docker compose up -d --build`. The Dockerfile fails the build if the venv
+   Python is outside 3.12–3.13, and the entrypoint logs a warning on boot if AP
+   can't be imported.
 
 ## Commands
 

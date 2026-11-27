@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, extractPlayerFiles } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
 import { buildZip } from './zip.js';
 
@@ -96,6 +96,33 @@ test('stagePlayers stages every world (slot) of every member user', async () => 
   assert.deepEqual(staged.sort(), ['Alice', 'Alice2', 'Bob']);
   assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')).sort(), ['Alice.yaml', 'Alice2.yaml', 'Bob.yaml']);
 });
+test('ensureApRequirements pip-installs the requirements file into the AP venv, and skips when not possible', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-req-'));
+  const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apdir-'));
+  const marker = path.join(dataDir, 'args.txt');
+  const fakePython = path.join(dataDir, 'fake-python');
+  fs.writeFileSync(fakePython, `#!/bin/sh\necho "$@" > "${marker}"\n`);
+  fs.chmodSync(fakePython, 0o755);
+  const config = { dataDir, apDir, apPython: fakePython };
+  const reqPath = path.join(dataDir, 'requirements-ap.txt');
+  fs.writeFileSync(reqPath, 'requests\n');
+
+  assert.equal(await ensureApRequirements(config, reqPath), true);
+  assert.match(fs.readFileSync(marker, 'utf8'), /^-m pip install .* -r .*requirements-ap\.txt/);
+
+  // no venv python or no requirements file: skipped, nothing spawned
+  assert.equal(await ensureApRequirements({ ...config, apPython: path.join(dataDir, 'missing-python') }, reqPath), false);
+  assert.equal(await ensureApRequirements(config, path.join(dataDir, 'missing.txt')), false);
+
+  // pip failure rejects so the caller can log it
+  fs.writeFileSync(fakePython, '#!/bin/sh\nexit 1\n');
+  await assert.rejects(() => ensureApRequirements(config, reqPath));
+
+  // default path points at the repo's docker/requirements-ap.txt
+  assert.ok(apRequirementsPath().endsWith(path.join('docker', 'requirements-ap.txt')));
+  assert.ok(fs.existsSync(apRequirementsPath()));
+});
+
 test('extractPlayerFiles pulls root-level output files from an AP zip (any entry but spoiler/hints/multidata), parsing AP_<seed>_P<n>_<player> names', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-zip-'));
   const zip = path.join(dir, 'AP_123.zip');

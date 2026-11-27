@@ -59,6 +59,24 @@ function runProcess(config, args, options = {}) {
   });
 }
 
+const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+
+export function apRequirementsPath() {
+  return path.join(appRoot, 'docker', 'requirements-ap.txt');
+}
+
+// The boot self-update can change docker/requirements-ap.txt without an image
+// rebuild, while the venv is baked into the image — so re-sync the venv against
+// the requirements file on every boot. pip is a fast no-op when everything is
+// already installed. Core worlds import some of these packages at load time
+// (e.g. worlds/osrs imports requests); a missing package makes that world fail
+// to load and its game ungeneratable ("No world found to handle game ...").
+export async function ensureApRequirements(config, reqPath = apRequirementsPath()) {
+  if (!fs.existsSync(config.apPython) || !fs.existsSync(reqPath)) return false;
+  await runProcess(config, ['-m', 'pip', 'install', '--quiet', '--no-cache-dir', '-r', reqPath], { timeoutMs: 300000 });
+  return true;
+}
+
 // Worlds can ship per-player files at the root of the generated AP_*.zip
 // (e.g. Minecraft's AP_<seed>_P1_<player>.apmc) that the player must load
 // in their game. Extracts every root-level file except subfolders (data/),

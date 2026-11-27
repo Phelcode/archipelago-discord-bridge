@@ -27,11 +27,21 @@ if [ "$SELF_UPDATE" = "true" ] && [ -n "$REPO_URL" ]; then
   APP_RUN_DIR="$LIVE_DIR"
 fi
 
-# Archipelago: clone it on first boot and update it to the newest version on
-# every boot (AP_UPDATE=false keeps the existing copy).
+# Archipelago: clone it on first boot and update it on every boot
+# (AP_UPDATE=false keeps the existing copy).
 AP_DIR="${AP_DIR:-/opt/Archipelago}"
 AP_REPO_URL="${AP_REPO_URL:-https://github.com/ArchipelagoMW/Archipelago.git}"
-AP_BRANCH="${AP_BRANCH:-main}"
+# Default to the newest stable release tag, not main: generated seeds embed the
+# generator's version/data-file format, and players run released clients/mods,
+# so a seed rolled from main can be rejected by every released mod (e.g. the
+# Minecraft mod's "APMC data file wrong version"). Set AP_BRANCH=main for
+# bleeding edge.
+AP_BRANCH="${AP_BRANCH:-}"
+if [ -z "$AP_BRANCH" ]; then
+  AP_BRANCH="$(git ls-remote --tags "$AP_REPO_URL" | sed -n 's|^.*refs/tags/\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -1)"
+  [ -n "$AP_BRANCH" ] || AP_BRANCH=main
+  echo "[entrypoint] AP_BRANCH not set; defaulting to latest stable release tag: $AP_BRANCH"
+fi
 AP_UPDATE="${AP_UPDATE:-true}"
 
 if [ ! -d "$AP_DIR" ] || [ "$AP_UPDATE" = "true" ]; then
@@ -42,6 +52,16 @@ if [ ! -d "$AP_DIR" ] || [ "$AP_UPDATE" = "true" ]; then
   else
     rm -rf "$AP_DIR"
     git clone --depth 1 --branch "$AP_BRANCH" "$AP_REPO_URL" "$AP_DIR"
+  fi
+fi
+
+# Export the synced AP version so the bridge's probe speaks the matching
+# protocol version (an explicit AP_VERSION env var still wins).
+AP_SYNCED_VERSION="$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' "$AP_DIR/Utils.py" | head -1)"
+if [ -n "$AP_SYNCED_VERSION" ]; then
+  echo "[entrypoint] Archipelago $AP_SYNCED_VERSION ($AP_BRANCH) at $AP_DIR"
+  if [ -z "${AP_VERSION:-}" ]; then
+    export AP_VERSION="$AP_SYNCED_VERSION"
   fi
 fi
 
