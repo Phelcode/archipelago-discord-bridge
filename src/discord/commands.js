@@ -462,26 +462,25 @@ async function sendPlayerFiles(ctx, mw, onlyUserId = null) {
     console.error(`[files] could not extract player files from ${mw.multidata}: ${err.message}`);
     return notes;
   }
+  // zip entries are named AP_<seed>_P<n>_<playerName>.<ext>; the player name
+  // is the yaml "name", which is the slot unless overridden at registration
+  const byPlayer = new Map(files.map((f) => [f.player, f]));
   const attachments = [];
   const lines = [];
   for (const userId of userIdsOf(mw)) {
     if (onlyUserId && userId !== onlyUserId) continue;
     for (const world of ctx.db.getWorlds(userId)) {
-      // zip entries are named after the in-game player name (the yaml "name"),
-      // which is the slot unless a different name was passed at registration
-      let base = world.slot;
-      if (!(base in files)) {
+      let file = byPlayer.get(world.slot);
+      if (!file) {
         try {
           const doc = YAML.parse(fs.readFileSync(path.join(ctx.config.dataDir, 'players', userId, `${world.slot}.yaml`), 'utf8'));
-          if (doc?.name && String(doc.name) in files) base = String(doc.name);
+          if (doc?.name) file = byPlayer.get(String(doc.name));
         } catch { /* no staged yaml */ }
       }
-      const file = files[base];
       if (!file) continue;
-      const name = path.basename(file);
-      attachments.push({ attachment: fs.readFileSync(file), name });
-      lines.push(`• **${name}** → <@${userId}> (${world.slot}, ${world.game})`);
-      notes.push(`**${name}** → <@${userId}> (${world.slot})`);
+      attachments.push({ attachment: fs.readFileSync(file.path), name: file.entry });
+      lines.push(`• **${file.entry}** → <@${userId}> (${world.slot}, ${world.game})`);
+      notes.push(`**${file.entry}** → <@${userId}> (${world.slot})`);
     }
   }
   if (!attachments.length) return notes;

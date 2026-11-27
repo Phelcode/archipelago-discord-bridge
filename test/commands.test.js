@@ -609,7 +609,8 @@ test('start DMs each member their per-player file from the generated zip (e.g. M
   ctx.db.addHost('host-1');
   const zip = path.join(ctx.config.dataDir, 'AP_9.zip');
   fs.writeFileSync(zip, buildZip([
-    { name: 'Alice.apmc', data: Buffer.from('alice-apmc'), deflate: true },
+    { name: 'AP_9_P1_Alice.apmc', data: Buffer.from('alice-apmc'), deflate: true },
+    { name: 'AP_9_Spoiler.txt', data: Buffer.from('spoiler') },
     { name: 'data/multidata', data: Buffer.from('m') },
   ]));
   ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: ['user-1'] });
@@ -629,7 +630,8 @@ test('start DMs each member their per-player file from the generated zip (e.g. M
   assert.equal(posts.length, 1);
   assert.match(posts[0].text, /Player files for multiworld \*\*g\*\*/);
   assert.match(posts[0].text, /<@user-1>/);
-  assert.equal(posts[0].files[0].name, 'Alice.apmc');
+  assert.equal(posts[0].files.length, 1); // spoiler txt is not posted
+  assert.equal(posts[0].files[0].name, 'AP_9_P1_Alice.apmc');
   assert.equal(posts[0].files[0].attachment.toString(), 'alice-apmc');
 });
 
@@ -660,7 +662,7 @@ test('register into an already-generated multiworld DMs the joining player their
   const ctx = makeCtx({ userId: 'host-1' });
   ctx.db.addHost('host-1');
   const zip = path.join(ctx.config.dataDir, 'AP_5.zip');
-  fs.writeFileSync(zip, buildZip([{ name: 'Alice.apmc', data: Buffer.from('apmc!') }]));
+  fs.writeFileSync(zip, buildZip([{ name: 'AP_5_P1_Alice.apmc', data: Buffer.from('apmc!') }]));
   ctx.db.setMultiworld('g', { name: 'g', status: 'generated', multidata: zip, seed: '5', seedNumber: 5, userIds: [] });
   const yaml = 'name: Alice\ngame: Minecraft\nMinecraft: {}\n';
   const playerCtx = makeCtx({
@@ -673,10 +675,10 @@ test('register into an already-generated multiworld DMs the joining player their
   playerCtx.postToChannel = async (text, files) => { posts.push({ text, files }); };
   const out = await handleCommand('register', playerCtx);
   assert.match(out, /joined multiworld \*\*g\*\*/);
-  assert.match(out, /\*\*Alice\.apmc\*\* → <@user-1>/);
+  assert.match(out, /\*\*AP_5_P1_Alice\.apmc\*\* → <@user-1>/);
   assert.equal(posts.length, 1);
   assert.match(posts[0].text, /<@user-1>/);
-  assert.equal(posts[0].files[0].name, 'Alice.apmc');
+  assert.equal(posts[0].files[0].name, 'AP_5_P1_Alice.apmc');
   assert.equal(posts[0].files[0].attachment.toString(), 'apmc!');
 });
 

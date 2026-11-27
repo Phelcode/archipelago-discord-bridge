@@ -96,22 +96,29 @@ test('stagePlayers stages every world (slot) of every member user', async () => 
   assert.deepEqual(staged.sort(), ['Alice', 'Alice2', 'Bob']);
   assert.deepEqual(fs.readdirSync(path.join(multiworldDir(config, mw), 'Players')).sort(), ['Alice.yaml', 'Alice2.yaml', 'Bob.yaml']);
 });
-test('extractPlayerFiles pulls root-level player files (e.g. .apmc) from an AP zip, skipping subfolders and yaml', () => {
+test('extractPlayerFiles pulls root-level output files from an AP zip (any entry but spoiler/hints/multidata), parsing AP_<seed>_P<n>_<player> names', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-zip-'));
   const zip = path.join(dir, 'AP_123.zip');
   fs.writeFileSync(zip, buildZip([
-    { name: 'Alice.apmc', data: Buffer.from('alice-apmc-data'), deflate: true },
-    { name: 'Bob.apmc', data: Buffer.from('bob-apmc-data') },
+    { name: 'AP_123_P1_Alice.apmc', data: Buffer.from('alice-apmc-data'), deflate: true },
+    { name: 'AP_123_P2_Bob.apmc', data: Buffer.from('bob-apmc-data') },
+    { name: 'AP_123_Spoiler.txt', data: Buffer.from('spoiler') },
+    { name: 'AP_123_Hints.txt', data: Buffer.from('hints') },
     { name: 'data/multidata', data: Buffer.from('multidata') },
-    { name: 'Alice.yaml', data: Buffer.from('name: Alice') },
-    { name: 'readme.txt', data: Buffer.from('hi') },
+    { name: 'AP_123.zip', data: Buffer.from('nested') },
+    { name: 'plain.apbp', data: Buffer.from('plain-name-entry') },
   ]));
   const outDir = path.join(dir, 'player-files');
   const files = extractPlayerFiles(zip, outDir);
-  assert.deepEqual(Object.keys(files).sort(), ['Alice', 'Bob']);
-  assert.equal(fs.readFileSync(files.Alice, 'utf8'), 'alice-apmc-data');
-  assert.equal(fs.readFileSync(files.Bob, 'utf8'), 'bob-apmc-data');
+  assert.deepEqual(files.map((f) => [f.player, f.entry]).sort(), [
+    ['Alice', 'AP_123_P1_Alice.apmc'],
+    ['Bob', 'AP_123_P2_Bob.apmc'],
+    ['plain', 'plain.apbp'],
+  ]);
+  assert.equal(fs.readFileSync(files[0].path, 'utf8'), 'alice-apmc-data');
+  assert.equal(fs.readFileSync(files[2].path, 'utf8'), 'plain-name-entry');
   assert.ok(!fs.existsSync(path.join(outDir, 'data')));
+  assert.ok(!fs.existsSync(path.join(outDir, 'AP_123_Spoiler.txt')));
   // not a zip -> throws
   const bad = path.join(dir, 'bad.zip');
   fs.writeFileSync(bad, 'PK not really');

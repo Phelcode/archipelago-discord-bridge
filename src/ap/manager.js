@@ -59,12 +59,14 @@ function runProcess(config, args, options = {}) {
   });
 }
 
-// Some worlds put a per-player file at the root of the generated AP_*.zip
-// (e.g. Minecraft's <slot>.apmc) that the player must load in their game.
-// Extracts those root-level files (skipping subfolders like data/ and
-// non-patch extensions) into outDir. Returns a map of basename-without-
-// extension -> extracted path. Pure JS (zlib) so no extra dependency is
-// needed; handles stored (0) and deflated (8) entries.
+// Worlds can ship per-player files at the root of the generated AP_*.zip
+// (e.g. Minecraft's AP_<seed>_P1_<player>.apmc) that the player must load
+// in their game. Extracts every root-level file except subfolders (data/),
+// the spoiler/hints logs and the multidata archive itself, into outDir.
+// Returns a list of { entry, player, path } where `player` is parsed from
+// AP's "<zipbase>_P<n>_<name>.<ext>" entry naming (falling back to the plain
+// basename). Pure JS (zlib) so no extra dependency is needed; handles stored
+// (0) and deflated (8) entries.
 export function extractPlayerFiles(zipPath, outDir) {
   const buf = fs.readFileSync(zipPath);
   let eocd = -1;
@@ -75,8 +77,9 @@ export function extractPlayerFiles(zipPath, outDir) {
   const count = buf.readUInt16LE(eocd + 10);
   let off = buf.readUInt32LE(eocd + 16);
   fs.mkdirSync(outDir, { recursive: true });
-  const skipExt = new Set(['yaml', 'yml', 'txt', 'json', 'md']);
-  const out = {};
+  const skipName = /_(spoiler|hints)\.txt$/i;
+  const skipExt = new Set(['zip', 'archipelago', 'yaml', 'yml']);
+  const out = [];
   for (let n = 0; n < count; n++) {
     if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('corrupt zip central directory');
     const method = buf.readUInt16LE(off + 10);
@@ -89,6 +92,7 @@ export function extractPlayerFiles(zipPath, outDir) {
     off += 46 + nameLen + extraLen + commentLen;
     const dot = name.lastIndexOf('.');
     if (name.endsWith('/') || name.includes('/') || dot <= 0) continue;
+    if (skipName.test(name)) continue;
     if (skipExt.has(name.slice(dot + 1).toLowerCase())) continue;
     const lNameLen = buf.readUInt16LE(localOff + 26);
     const lExtraLen = buf.readUInt16LE(localOff + 28);
@@ -100,7 +104,9 @@ export function extractPlayerFiles(zipPath, outDir) {
     if (!data) continue;
     const dest = path.join(outDir, name);
     fs.writeFileSync(dest, data);
-    out[name.slice(0, dot)] = dest;
+    const stem = name.slice(0, dot);
+    const m = stem.match(/^(?:.+)_P\d+_(.+)$/);
+    out.push({ entry: name, player: m ? m[1] : stem, path: dest });
   }
   return out;
 }
