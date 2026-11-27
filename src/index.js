@@ -68,6 +68,13 @@ export async function restartRunningMultiworlds(config, db, apImpl = ap) {
 
 async function main() {
   const config = loadConfig();
+  try {
+    if (await ap.ensureApRequirements(config)) {
+      console.log('[boot] Archipelago venv synced with docker/requirements-ap.txt');
+    }
+  } catch (err) {
+    console.error(`[boot] failed to sync Archipelago venv with docker/requirements-ap.txt: ${err.message}`);
+  }
   const db = new Store(path.join(config.dataDir, 'db.json'));
   await restartRunningMultiworlds(config, db);
   const client = createDiscordClient({ config, db });
