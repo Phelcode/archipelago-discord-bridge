@@ -238,6 +238,7 @@ export function startMultiworld(config, db, mw, port) {
     '--port', String(port),
     '--auto_shutdown', '0',
     '--loglevel', 'info',
+    '--logtime',
     '--release_mode', 'enabled', // lets the bridge send !release as the target slot
   ];
   if (mw.password) args.push('--password', mw.password);
@@ -357,15 +358,15 @@ export async function waitForPort(port, timeoutMs = 15000) {
   return false;
 }
 
-// MultiServer logs every item send with a timestamp, e.g.:
-// [MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Alice sent Map Bombs to Bob (Tile 3)
-// The wire protocol's ReceivedItems has no timestamps, so "when" comes from this log.
+// MultiServer logs item sends as "(Team #N) <sender> sent <item> to <receiver> (<location>)";
+// AP's own log files prefix that with "[Server at <time>]: ", stdout with "[<time>] " when run
+// with --logtime (the bridge passes it) and with no prefix at all otherwise.
 export function parseItemSendsText(text) {
   const sends = [];
-  const re = /^\[[^\]]+ at ([^\]]+)\]: \(Team #\d+\) (.+) sent (.+) to (.+) \((.+)\)$/gm;
+  const re = /^(?:(?:\[[^\]]+ at ([^\]]+)\]|\[([^\]]+)\]):?)?\s*\(Team #\d+\) (.+) sent (.+) to (.+) \((.+)\)$/gm;
   let m;
   while ((m = re.exec(text)) !== null) {
-    sends.push({ at: m[1], sender: m[2], item: m[3], receiver: m[4], location: m[5] });
+    sends.push({ at: m[1] || m[2] || '', sender: m[3], item: m[4], receiver: m[5], location: m[6] });
   }
   return sends;
 }
