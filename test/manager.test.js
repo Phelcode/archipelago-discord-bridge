@@ -130,6 +130,13 @@ test('ensureApRequirements pip-installs the requirements file into the AP venv, 
   assert.ok(fs.existsSync(apRequirementsPath()));
 });
 
+test('requirements-ap.txt covers the world-load deps seen as ModuleNotFoundError in server logs', () => {
+  const req = fs.readFileSync(apRequirementsPath(), 'utf8');
+  for (const pkg of ['requests', 'setuptools', 'cryptography', 'pyevermizer', 'zilliandomizer']) {
+    assert.match(req, new RegExp(`^${pkg}$`, 'm'), `requirements-ap.txt missing ${pkg}`);
+  }
+});
+
 test('extractPlayerFiles pulls root-level output files from an AP zip (any entry but spoiler/hints/multidata), parsing AP_<seed>_P<n>_<player> names', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-zip-'));
   const zip = path.join(dir, 'AP_123.zip');
