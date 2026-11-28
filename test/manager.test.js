@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles, probe, say, closeProbeDaemon } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
 import { buildZip } from './zip.js';
 
@@ -150,4 +150,41 @@ test('extractPlayerFiles pulls root-level output files from an AP zip (any entry
   const bad = path.join(dir, 'bad.zip');
   fs.writeFileSync(bad, 'PK not really');
   assert.throws(() => extractPlayerFiles(bad, path.join(dir, 'out2')));
+});
+
+function writeFakeProbeDaemon(dir, respond) {
+  const script = path.join(dir, 'fake-probe.mjs');
+  const countFile = path.join(dir, 'count.txt');
+  fs.writeFileSync(countFile, '0');
+  fs.writeFileSync(script, `import readline from 'node:readline';\nimport fs from 'node:fs';\nconst rl = readline.createInterface({ input: process.stdin });\nrl.on('line', () => {\n  const n = Number(fs.readFileSync(${JSON.stringify(countFile)}, 'utf8')) + 1;\n  fs.writeFileSync(${JSON.stringify(countFile)}, String(n));\n  console.log(JSON.stringify(${respond}));\n});\n`);
+  return { script, countFile };
+}
+
+test('probe retries once after a daemon error (e.g. stale socket keepalive 1011) and succeeds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-probe1-'));
+  const { script, countFile } = writeFakeProbeDaemon(dir, `(n === 1 ? { error: 'sent 1011 (internal error) keepalive ping timeout; no close frame received' } : { ok: true, n })`);
+  const config = { dataDir: dir, apPython: process.execPath, apProbeScript: script, apVersion: '0.6.9' };
+  const mw = { name: 'g1', port: 39991 };
+  try {
+    const res = await probe(config, mw, 'stats', null, 5000, ['Alice']);
+    assert.deepEqual(res, { ok: true, n: 2 });
+    assert.equal(fs.readFileSync(countFile, 'utf8'), '2');
+  } finally {
+    closeProbeDaemon(mw);
+  }
+});
+
+test('probe throws the daemon error after a single retry when errors persist', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-probe2-'));
+  const { script, countFile } = writeFakeProbeDaemon(dir, `{ error: 'sent 1011 (internal error) keepalive ping timeout; no close frame received' }`);
+  const config = { dataDir: dir, apPython: process.execPath, apProbeScript: script, apVersion: '0.6.9' };
+  const mw = { name: 'g2', port: 39992 };
+  try {
+    await assert.rejects(() => probe(config, mw, 'stats', null, 5000, ['Alice']), /keepalive ping timeout/);
+    assert.equal(fs.readFileSync(countFile, 'utf8'), '2');
+    await assert.rejects(() => say(config, mw, 'Alice', '!release'), /keepalive ping timeout/);
+    assert.equal(fs.readFileSync(countFile, 'utf8'), '4');
+  } finally {
+    closeProbeDaemon(mw);
+  }
 });
