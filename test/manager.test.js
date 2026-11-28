@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles, probe, say, closeProbeDaemon } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles, probe, say, closeProbeDaemon, startMultiworld } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
 import { buildZip } from './zip.js';
 
@@ -193,4 +193,21 @@ test('probe throws the daemon error after a single retry when errors persist', a
   } finally {
     closeProbeDaemon(mw);
   }
+});
+
+test('startMultiworld binds the AP server dual-stack (--host ::) on the given port', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-start-'));
+  const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apdir-'));
+  const marker = path.join(dataDir, 'args.txt');
+  const fakePython = path.join(dataDir, 'fake-python');
+  fs.writeFileSync(fakePython, `#!/bin/sh\necho "$@" > "${marker}"\n`);
+  fs.chmodSync(fakePython, 0o755);
+  const config = { dataDir, apDir, apPython: fakePython };
+  const multidata = path.join(dataDir, 'game.archipelago');
+  fs.writeFileSync(multidata, 'x');
+  startMultiworld(config, null, { name: 'mw', multidata, password: null }, 38281);
+  for (let i = 0; i < 50 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 20));
+  const args = fs.readFileSync(marker, 'utf8');
+  assert.match(args, /--host :: /);
+  assert.match(args, /--port 38281/);
 });
