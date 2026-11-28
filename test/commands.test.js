@@ -270,6 +270,29 @@ test('hints shows only the player hints and respects HINTS_ENABLED', async () =>
   await assert.rejects(() => handleCommand('hints', noHints), /disabled/);
 });
 
+test('hints resolves the player slot before probing hints mode (daemon requires --slot)', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('g', { name: 'g', status: 'running', port: 39001, userIds: ['user-1'], apworlds: [] });
+  const calls = [];
+  ctx.ap = {
+    ...realAp,
+    async probe(config, mw, mode, slot) {
+      calls.push({ mode, slot });
+      if (mode === 'hints' && slot == null) throw new Error('--slot is required in hints mode');
+      return {
+        room: {},
+        players: [{ slot: 2, name: 'Alice', game: 'ChecksFinder', checked: [], missing_count: 25, total: 25, hint_points: 0, status: 20 }],
+        hints: mode === 'hints' ? { 2: [{ item: 'Map Bombs', location: 'Tile 3', finding_player_name: 'Bob', found: false, entrance: '' }] } : {},
+      };
+    },
+  };
+  const out = await handleCommand('hints', ctx);
+  assert.match(out, /Map Bombs/);
+  assert.deepEqual(calls.map((c) => c.mode), ['stats', 'hints']);
+  assert.equal(calls[1].slot, 2);
+});
+
 test('stats on a non-running game fails with a clear message', async () => {
   const ctx = makeCtx();
   ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: [], apworlds: [] });
