@@ -119,6 +119,8 @@ class SlotConns:
     async def close_all(self):
         for name in list(self.conns):
             await self.drop(name)
+        self.room = None
+        self.slot_info = None
 
 
 async def run_overview(sc: SlotConns, timeout, known_slots, only, player_slots):
@@ -319,6 +321,7 @@ async def daemon(sc: SlotConns, timeout, known_slots):
                                   known_slots=known_slots, say=req if req.get("mode") == "say" else None)
         except Exception as exc:
             out = {"error": str(exc)}
+            await sc.close_all()
         sys.stdout.write(json.dumps(out) + "\n")
         sys.stdout.flush()
     await sc.close_all()

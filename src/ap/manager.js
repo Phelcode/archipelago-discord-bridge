@@ -381,7 +381,8 @@ export function parseItemSends(logFile) {
 export async function probe(config, mw, mode, slot, timeoutMs, knownSlots, onlySlots) {
   const slots = knownSlots || [];
   const req = { mode, slot: slot ?? null, only: onlySlots?.length ? onlySlots : null };
-  const response = await daemonRequest(config, mw, req, timeoutMs, slots);
+  let response = await daemonRequest(config, mw, req, timeoutMs, slots);
+  if (response.error) response = await daemonRequest(config, mw, req, timeoutMs, slots);
   if (response.error) throw new Error(response.error);
   return response;
 }
@@ -390,7 +391,8 @@ export async function probe(config, mw, mode, slot, timeoutMs, knownSlots, onlyS
 // persistent probe daemon. Used by /release.
 export async function say(config, mw, slotName, text) {
   const req = { mode: 'say', name: slotName, text };
-  const response = await daemonRequest(config, mw, req, 15000, [slotName]);
+  let response = await daemonRequest(config, mw, req, 15000, [slotName]);
+  if (response.error) response = await daemonRequest(config, mw, req, 15000, [slotName]);
   if (response.error) throw new Error(response.error);
   return response;
 }
