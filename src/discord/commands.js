@@ -404,7 +404,7 @@ function resolveMultiworld(ctx, name) {
   if (running.length > 1) throw new UserError(`Multiple multiworlds are running; specify one: ${running.map((g) => g.name).join(', ')}`);
   if (mws.length === 1) return mws[0];
   if (mws.length === 0) throw new UserError('No multiworlds have been set up yet. A host can create one with /setup-multiworld.');
-  return games[mws.length - 1];
+  return mws[mws.length - 1];
 }
 
 // Generates the multiworld if it doesn't have one yet (called by

@@ -293,6 +293,14 @@ test('hints resolves the player slot before probing hints mode (daemon requires 
   assert.equal(calls[1].slot, 2);
 });
 
+test('command without multiworld option and several non-running multiworlds picks one instead of crashing', async () => {
+  const ctx = makeCtx();
+  ctx.db.setPlayer('user-1', { slot: 'Alice', game: 'ChecksFinder' });
+  ctx.db.setMultiworld('g1', { name: 'g1', status: 'stopped', userIds: ['user-1'] });
+  ctx.db.setMultiworld('g2', { name: 'g2', status: 'setup', userIds: ['user-1'] });
+  await assert.rejects(() => handleCommand('received', ctx), /not running/);
+});
+
 test('stats on a non-running game fails with a clear message', async () => {
   const ctx = makeCtx();
   ctx.db.setMultiworld('g', { name: 'g', status: 'setup', userIds: [], apworlds: [] });
