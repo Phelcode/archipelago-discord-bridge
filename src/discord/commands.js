@@ -981,9 +981,11 @@ const handlers = {
     if (!player) throw new UserError('You must /register first.');
     const mw = resolveMultiworld(ctx, ctx.options.multiworld);
     if (mw.status !== 'running') throw new UserError(`Multiworld **${mw.name}** is not running (status: ${mw.status}).`);
-    const probeResult = await ctx.ap.probe(ctx.config, mw, 'hints', null, 30000, multiworldSlots(ctx.db, mw));
-    const me = probeResult.players.find((p) => p.name === player.slot);
+    const slots = multiworldSlots(ctx.db, mw);
+    const stats = await ctx.ap.probe(ctx.config, mw, 'stats', null, 30000, slots);
+    const me = stats.players.find((p) => p.name === player.slot);
     if (!me) throw new UserError(`Your slot "${player.slot}" was not found in the running multiworld.`);
+    const probeResult = await ctx.ap.probe(ctx.config, mw, 'hints', me.slot, 30000, slots);
     const hints = probeResult.hints?.[me.slot] || [];
     if (!hints.length) return `No hints for **${player.slot}** in multiworld **${mw.name}** yet.`;
     const lines = [`**Hints for ${player.slot}** (multiworld ${mw.name}):`];
