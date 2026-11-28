@@ -22,6 +22,22 @@ export function multiworldDir(config, mw) {
   return path.join(config.dataDir, 'multiworlds', slugify(mw.name));
 }
 
+export function multiServerSupportsLogtime(config) {
+  try {
+    return fs.readFileSync(path.join(config.apDir, 'MultiServer.py'), 'utf8').includes('--logtime');
+  } catch {
+    return false;
+  }
+}
+
+export function logTail(logFile, maxChars = 2000) {
+  try {
+    return fs.readFileSync(logFile, 'utf8').slice(-maxChars);
+  } catch {
+    return '';
+  }
+}
+
 function ensureDirs(dir) {
   fs.mkdirSync(path.join(dir, 'apworlds'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'Players'), { recursive: true });
@@ -238,9 +254,9 @@ export function startMultiworld(config, db, mw, port) {
     '--port', String(port),
     '--auto_shutdown', '0',
     '--loglevel', 'info',
-    '--logtime',
     '--release_mode', 'enabled', // lets the bridge send !release as the target slot
   ];
+  if (multiServerSupportsLogtime(config)) args.push('--logtime');
   if (mw.password) args.push('--password', mw.password);
   const child = spawn(config.apPython, args, {
     cwd: config.apDir,
@@ -285,7 +301,7 @@ async function daemonRequest(config, mw, req, timeoutMs, knownSlots) {
   const key = `${mw.name}:${mw.port}`;
   let d = probeDaemons.get(key);
   if (!d || d.dead) {
-    const args = [config.apProbeScript, '--daemon', '--host', '127.0.0.1', '--port', String(mw.port), '--ap-version', config.apVersion, '--timeout', '20'];
+    const args = [config.apProbeScript, '--daemon', '--host', 'localhost', '--port', String(mw.port), '--ap-version', config.apVersion, '--timeout', '20'];
     if (mw.password) args.push('--password', mw.password);
     if (knownSlots.length) args.push('--slots', knownSlots.join(','));
     const proc = spawn(config.apPython, args, { env: { ...process.env, SKIP_REQUIREMENTS_UPDATE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -334,7 +350,7 @@ export function isServerProcessAlive(mw) {
   try { process.kill(mw.pid, 0); return true; } catch { return false; }
 }
 
-export function isPortListening(port, host = '127.0.0.1', timeoutMs = 1000) {
+function probePort(port, host, timeoutMs) {
   return new Promise((resolve) => {
     const socket = net.connect(port, host);
     socket.once('connect', () => { socket.end(); resolve(true); });
@@ -343,16 +359,15 @@ export function isPortListening(port, host = '127.0.0.1', timeoutMs = 1000) {
   });
 }
 
+export function isPortListening(port, host = null, timeoutMs = 1000) {
+  const hosts = host ? [host] : ['127.0.0.1', '::1'];
+  return Promise.all(hosts.map((h) => probePort(port, h, timeoutMs))).then((rs) => rs.some(Boolean));
+}
+
 export async function waitForPort(port, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const open = await new Promise((resolve) => {
-      const socket = net.connect(port, '127.0.0.1');
-      socket.once('connect', () => { socket.end(); resolve(true); });
-      socket.once('error', () => resolve(false));
-      setTimeout(() => { socket.destroy(); resolve(false); }, 1000);
-    });
-    if (open) return true;
+    if (await isPortListening(port, null, 1000)) return true;
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;

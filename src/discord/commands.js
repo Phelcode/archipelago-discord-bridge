@@ -902,7 +902,8 @@ const handlers = {
     const up = await ctx.ap.waitForPort(port);
     if (!up) {
       ctx.ap.stopMultiworld(ctx.config, mw);
-      throw new UserError(`Server did not start listening on port ${port}. See log: ${logFile}`);
+      const tail = ctx.ap.logTail ? ctx.ap.logTail(logFile) : '';
+      throw new UserError(`Server did not start listening on port ${port}. See log: ${logFile}${tail ? `\n${tail}` : ''}`);
     }
     mw.status = 'running';
     mw.port = port;
