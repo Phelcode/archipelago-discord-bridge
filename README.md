@@ -95,7 +95,11 @@ Roles are assigned by Discord ID:
    `BASE_PORT`..`AP_PORT_RANGE_END` (default 38281–38290), because each running
    game's Archipelago server listens on the next free port from `BASE_PORT` and
    players must reach it. Adjust the range in `docker-compose.yml` if you change
-   `BASE_PORT`.
+   `BASE_PORT`. The game servers bind `::` (dual-stack: IPv6 plus IPv4-mapped),
+   and the compose file publishes the range on both IPv4 and IPv6, so players can
+   connect via either address family of the hostname; the host firewall must allow
+   the range on both stacks. On a host without IPv6, remove the `[::]` ports line
+   from `docker-compose.yml`.
 
    The container **updates itself to the newest version on boot**: the entrypoint
    pulls the latest `main` of this repository before starting. Set `SELF_UPDATE=false`
