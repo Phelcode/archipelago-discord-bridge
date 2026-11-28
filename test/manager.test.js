@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles, probe, say, closeProbeDaemon, startMultiworld } from '../src/ap/manager.js';
+import { resolveSeed, slugify, saveApworld, listApworlds, installApworlds, parseItemSends, stagePlayers, multiworldDir, ensureApRequirements, apRequirementsPath, extractPlayerFiles, probe, say, closeProbeDaemon, startMultiworld, logTail, isPortListening, waitForPort } from '../src/ap/manager.js';
 import { Store } from '../src/store.js';
 import { buildZip } from './zip.js';
 
@@ -165,6 +166,59 @@ function writeFakeProbeDaemon(dir, respond) {
   fs.writeFileSync(script, `import readline from 'node:readline';\nimport fs from 'node:fs';\nconst rl = readline.createInterface({ input: process.stdin });\nrl.on('line', () => {\n  const n = Number(fs.readFileSync(${JSON.stringify(countFile)}, 'utf8')) + 1;\n  fs.writeFileSync(${JSON.stringify(countFile)}, String(n));\n  console.log(JSON.stringify(${respond}));\n});\n`);
   return { script, countFile };
 }
+
+test('isPortListening/waitForPort detect a server bound to IPv4-only or IPv6-only loopback', async () => {
+  const s4 = net.createServer();
+  await new Promise((r) => s4.listen(0, '127.0.0.1', r));
+  const p4 = s4.address().port;
+  assert.equal(await isPortListening(p4), true);
+  assert.equal(await waitForPort(p4, 2000), true);
+  await new Promise((r) => s4.close(r));
+  assert.equal(await isPortListening(p4, null, 300), false);
+
+  const s6 = net.createServer();
+  const ok6 = await new Promise((resolve) => {
+    s6.once('error', () => resolve(false));
+    s6.listen(0, '::1', () => resolve(true));
+  });
+  if (!ok6) return; // no IPv6 loopback in this environment
+  const p6 = s6.address().port;
+  assert.equal(await isPortListening(p6), true);
+  assert.equal(await waitForPort(p6, 2000), true);
+  await new Promise((r) => s6.close(r));
+});
+
+test('startMultiworld passes --logtime only when the AP checkout supports it; logTail returns the log end', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-start-'));
+  const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apdir-'));
+  const marker = path.join(dataDir, 'args.txt');
+  const fakePython = path.join(dataDir, 'fake-python');
+  fs.writeFileSync(fakePython, '#!/bin/sh\nprintf "%s\\n" "$@" > "' + marker + '"\n');
+  fs.chmodSync(fakePython, 0o755);
+  fs.writeFileSync(path.join(apDir, 'MultiServer.py'), "parser.add_argument('--logtime', action='store_true')\n");
+  const multidata = path.join(dataDir, 'AP_1.zip');
+  fs.writeFileSync(multidata, 'PK');
+  const config = { dataDir, apDir, apPython: fakePython };
+  const db = new Store(path.join(dataDir, 'db.json'));
+  const mw = { name: 'g', multidata, apworlds: [] };
+  const waitForFile = async (file) => {
+    for (let i = 0; i < 100 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 25));
+  };
+  fs.rmSync(marker, { force: true });
+  startMultiworld(config, db, mw, 39111);
+  await waitForFile(marker);
+  assert.match(fs.readFileSync(marker, 'utf8'), /(^|\n)--logtime(\n|$)/);
+  fs.writeFileSync(path.join(apDir, 'MultiServer.py'), '# old AP without the flag\n');
+  fs.rmSync(marker, { force: true });
+  startMultiworld(config, db, mw, 39112);
+  await waitForFile(marker);
+  assert.doesNotMatch(fs.readFileSync(marker, 'utf8'), /--logtime/);
+  const logFile = path.join(multiworldDir(config, mw), 'server.log');
+  fs.appendFileSync(logFile, 'line1\nline2\n');
+  assert.equal(logTail(logFile), 'line1\nline2\n');
+  assert.equal(logTail(logFile, 4), 'ne2\n');
+  assert.equal(logTail(path.join(dataDir, 'missing.log')), '');
+});
 
 test('probe retries once after a daemon error (e.g. stale socket keepalive 1011) and succeeds', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-probe1-'));

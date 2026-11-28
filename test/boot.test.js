@@ -68,6 +68,25 @@ test('a server that never comes up marks the game stopped and kills the process'
   assert.equal(db.getMultiworld('g').status, 'stopped');
 });
 
+test('boot restart failure surfaces the server log tail in the error', async () => {
+  const { config, db } = makeEnv();
+  const zip = makeZip(config);
+  const logFile = path.join(config.dataDir, 'server.log');
+  fs.writeFileSync(logFile, 'usage: MultiServer.py ...\nerror: unrecognized arguments: --logtime\n');
+  db.setMultiworld('g', { name: 'g', status: 'running', multidata: zip, userIds: [] });
+  const ap = apStub({ waitForPort: async () => false, startMultiworld: () => ({ pid: 1, logFile }) });
+  const errors = [];
+  const orig = console.error;
+  console.error = (...a) => errors.push(a.map(String).join(' '));
+  try {
+    await restartRunningMultiworlds(config, db, ap);
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(db.getMultiworld('g').status, 'stopped');
+  assert.match(errors.join('\n'), /unrecognized arguments: --logtime/);
+});
+
 test('startMultiworld throwing marks the game stopped', async () => {
   const { config, db } = makeEnv();
   const zip = makeZip(config);

@@ -51,7 +51,10 @@ export async function restartRunningMultiworlds(config, db, apImpl = ap) {
     try {
       const { pid, logFile } = apImpl.startMultiworld(config, db, mw, port);
       const up = await apImpl.waitForPort(port, 15000);
-      if (!up) throw new Error(`server did not come up on port ${port} (see ${logFile})`);
+      if (!up) {
+        const tail = ap.logTail(logFile);
+        throw new Error(`server did not come up on port ${port} (see ${logFile})${tail ? `: ${tail}` : ''}`);
+      }
       mw.port = port;
       mw.pid = pid;
       mw.startedAt = new Date().toISOString();
