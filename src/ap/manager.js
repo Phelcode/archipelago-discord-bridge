@@ -250,7 +250,7 @@ export function startMultiworld(config, db, mw, port) {
   const args = [
     path.join(config.apDir, 'MultiServer.py'),
     mw.multidata,
-    '--host', '::',
+    '--host', '0.0.0.0',
     '--port', String(port),
     '--auto_shutdown', '0',
     '--loglevel', 'info',

@@ -8,10 +8,13 @@ services:
       # gateway (discord.js), so this port does not need to be public.
       - "${PORT:-3000}:${PORT:-3000}"
       # Archipelago game servers: the bridge spawns one server per running game
-      # on BASE_PORT (default 38281) and up. Players connect to these ports, so
-      # they must be published on both IPv4 and IPv6 (the servers bind ::, which
-      # accepts IPv4-mapped connections too). Keep the range in sync with
-      # BASE_PORT. On a host without IPv6, remove the [::] line.
+      # on BASE_PORT (default 38281) and up. Players connect to these ports.
+      # The servers bind 0.0.0.0 inside the container: docker-proxy forwards
+      # published ports to the container's IPv4 address, so an IPv6-only (::)
+      # bind would be unreachable from outside. Publishing the range on both
+      # 0.0.0.0 and [::] lets players connect via either address family of the
+      # host. Keep the range in sync with BASE_PORT. On a host without IPv6,
+      # remove the [::] line.
       - "${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}:${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}"
       - "[::]:${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}:${BASE_PORT:-38281}-${AP_PORT_RANGE_END:-38290}"
     volumes:

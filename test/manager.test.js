@@ -219,7 +219,9 @@ test('startMultiworld passes --logtime only when the AP checkout supports it; lo
   fs.rmSync(marker, { force: true });
   startMultiworld(config, db, mw, 39112);
   await waitForFile(marker);
-  assert.doesNotMatch(fs.readFileSync(marker, 'utf8'), /--logtime/);
+  const args = fs.readFileSync(marker, 'utf8').split('\n');
+  assert.ok(!args.includes('--logtime'));
+  assert.equal(args[args.indexOf('--host') + 1], '0.0.0.0');
   const logFile = path.join(multiworldDir(config, mw), 'server.log');
   fs.appendFileSync(logFile, 'line1\nline2\n');
   assert.equal(logTail(logFile), 'line1\nline2\n');
@@ -256,7 +258,7 @@ test('probe throws the daemon error after a single retry when errors persist', a
   }
 });
 
-test('startMultiworld binds the AP server dual-stack (--host ::) on the given port', async () => {
+test('startMultiworld binds the AP server to 0.0.0.0 (reachable via docker-published ports) on the given port', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-start-'));
   const apDir = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-apdir-'));
   const marker = path.join(dataDir, 'args.txt');
@@ -269,6 +271,6 @@ test('startMultiworld binds the AP server dual-stack (--host ::) on the given po
   startMultiworld(config, null, { name: 'mw', multidata, password: null }, 38281);
   for (let i = 0; i < 50 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 20));
   const args = fs.readFileSync(marker, 'utf8');
-  assert.match(args, /--host :: /);
+  assert.match(args, /--host 0\.0\.0\.0 /);
   assert.match(args, /--port 38281/);
 });
