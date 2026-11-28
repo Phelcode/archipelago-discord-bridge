@@ -784,7 +784,7 @@ const handlers = {
     const lines = [header];
     items.forEach((s, i) => {
       const idx = (scope === 'all' ? i : seen + i) + 1;
-      lines.push(`• #${idx} **${s.item}** from **${s.sender}** (found at ${s.location}) — ${s.at}`);
+      lines.push(`• #${idx} **${s.item}** from **${s.sender}** (found at ${s.location})${s.at ? ` — ${s.at}` : ''}`);
     });
     return lines.join('\n');
   },

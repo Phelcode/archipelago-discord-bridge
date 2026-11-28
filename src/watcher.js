@@ -39,7 +39,7 @@ export async function pollRunningMultiworlds(config, db, apImpl, notify) {
       const prefs = db.getPreference(userId);
       const seen = prefs.lastReceivedIndex?.[mw.name] || 0;
       db.setPreference(userId, 'lastReceivedIndex', { ...(prefs.lastReceivedIndex || {}), [mw.name]: seen + 1 });
-      await notify(userId, `🔔 You are marked blocked — **${s.sender}** sent you **${s.item}** (found at ${s.location}) in multiworld **${mw.name}** — ${s.at}.`).catch((err) => {
+      await notify(userId, `🔔 You are marked blocked — **${s.sender}** sent you **${s.item}** (found at ${s.location}) in multiworld **${mw.name}**${s.at ? ` — ${s.at}` : ''}.`).catch((err) => {
         console.error(`[watch] could not DM ${userId}: ${err.message}`);
       });
     }

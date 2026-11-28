@@ -388,23 +388,27 @@ test('received reads item sends from the server log (what/who/when); new by defa
     '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Bob sent Map Bombs to Alice (Tile 3)',
     '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 4)',
     '[MultiServer at 2026-01-02 03:05:01,000]: (Team #1) Alice sent Map Bombs to Bob (Tile 9)',
+    '[2026-01-02 03:06:00] (Team #1) Bob sent Bow to Alice (Tile 5)',
+    '(Team #1) Bob sent Potion to Alice (Tile 6)',
     '',
   ].join('\n'));
   ctx.options = { multiworld: 'g' };
   let out = await handleCommand('received', ctx);
   assert.match(out, /Map Bombs/);
   assert.match(out, /Progressive Sword/);
+  assert.match(out, /Bow/);
+  assert.match(out, /Potion/);
   assert.match(out, /from \*\*Bob\*\*/); // by who
   assert.match(out, /2026-01-02 03:04:05,678/); // when, from the log timestamp
   assert.doesNotMatch(out, /Tile 9/); // items sent BY Alice are not hers
-  assert.equal(ctx.db.getPreference('user-1').lastReceivedIndex.g, 2);
+  assert.equal(ctx.db.getPreference('user-1').lastReceivedIndex.g, 4);
 
   out = await handleCommand('received', ctx); // nothing new since last check
   assert.match(out, /Nothing new/);
 
   ctx.options = { multiworld: 'g', scope: 'all' };
   out = await handleCommand('received', ctx);
-  assert.match(out, /full list \(2\)/);
+  assert.match(out, /full list \(4\)/);
   assert.match(out, /Map Bombs/);
 
   // requires registration

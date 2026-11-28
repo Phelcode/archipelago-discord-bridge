@@ -58,11 +58,17 @@ test('parseItemSends extracts timestamped item sends from a MultiServer log', ()
     '[MultiServer at 2026-01-02 03:04:05,678]: (Team #1) Alice sent Map Bombs to Bob (Tile 3)',
     '[MultiServer at 2026-01-02 03:05:00,000]: (Team #1) Bob sent Progressive Sword to Alice (Tile 1)',
     '[MultiServer at 2026-01-02 03:06:00,000]: some other log line',
+    '[Server at 2026-01-02 03:07:00,000]: (Team #2) Carol sent Bow to Dave (Tile 7)',
+    '[2026-01-02 03:08:00] (Team #1) Dave sent Potion to Bob (Tile 8)',
+    '(Team #1) Eve sent Lantern to Bob (Tile 9)',
   ].join('\n') + '\n');
   const sends = parseItemSends(log);
-  assert.equal(sends.length, 2);
+  assert.equal(sends.length, 5);
   assert.deepEqual(sends[0], { at: '2026-01-02 03:04:05,678', sender: 'Alice', item: 'Map Bombs', receiver: 'Bob', location: 'Tile 3' });
   assert.deepEqual(sends[1], { at: '2026-01-02 03:05:00,000', sender: 'Bob', item: 'Progressive Sword', receiver: 'Alice', location: 'Tile 1' });
+  assert.deepEqual(sends[2], { at: '2026-01-02 03:07:00,000', sender: 'Carol', item: 'Bow', receiver: 'Dave', location: 'Tile 7' });
+  assert.deepEqual(sends[3], { at: '2026-01-02 03:08:00', sender: 'Dave', item: 'Potion', receiver: 'Bob', location: 'Tile 8' });
+  assert.deepEqual(sends[4], { at: '', sender: 'Eve', item: 'Lantern', receiver: 'Bob', location: 'Tile 9' });
   assert.deepEqual(parseItemSends(path.join(dir, 'missing.log')), []);
 });
 
