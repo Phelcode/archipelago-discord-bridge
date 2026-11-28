@@ -17,3 +17,11 @@ bsdiff4
 # worlds/osrs via LogicCSV/LogicCSVToPython.py); a world that fails to import
 # makes its game ungeneratable ("No world found to handle game ...").
 requests
+# World-load deps seen as "ModuleNotFoundError" in MultiServer logs when
+# missing (each breaks the worlds that import it at load time):
+# pkg_resources -> setuptools (pokemon_emerald), cryptography (tww),
+# pyevermizer (evermore/soe), zilliandomizer (zillion).
+setuptools
+cryptography
+pyevermizer
+zilliandomizer
